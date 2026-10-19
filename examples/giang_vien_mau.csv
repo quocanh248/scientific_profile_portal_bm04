@@ -1,0 +1,3 @@
+staff_code,full_name,username,department_code,department_start_date,personal_id,date_of_birth,gender,professional_title,position,home_address,phone,email
+GV001,Nguyễn Văn A,gv001,CNTT,2015-01-01,079001000001,1985-05-12,male,Giảng viên chính,Giảng viên,TP. Hồ Chí Minh,0900000001,gv001@example.edu.vn
+GV002,Trần Thị B,gv002,CNTT,2020-09-01,079002000002,1990-09-20,female,Giảng viên,Giảng viên,TP. Hồ Chí Minh,0900000002,gv002@example.edu.vn
