@@ -1,0 +1,33 @@
+export default function RelatedCheck({
+  title,
+  items,
+  selected,
+  onToggle,
+}: {
+  title: string;
+  items: { id: string; label: string }[];
+  selected: string[];
+  onToggle: (id: string) => void;
+}) {
+  return (
+    <div>
+      <h4>{title}</h4>
+      <div className="check-list compact">
+        {items.length ? (
+          items.map((x) => (
+            <label key={x.id}>
+              <input
+                type="checkbox"
+                checked={selected.includes(x.id)}
+                onChange={() => onToggle(x.id)}
+              />
+              <span>{x.label}</span>
+            </label>
+          ))
+        ) : (
+          <p className="muted small">Không có dữ liệu.</p>
+        )}
+      </div>
+    </div>
+  );
+}

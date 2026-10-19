@@ -147,7 +147,10 @@ CREATE TABLE IF NOT EXISTS portal_workauthor (
   CONSTRAINT wa_department_fk FOREIGN KEY(department_at_publication_id) REFERENCES portal_department(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 CREATE TABLE IF NOT EXISTS portal_workevidence (
-  id BIGINT AUTO_INCREMENT PRIMARY KEY,work_id CHAR(32) NOT NULL,private_path VARCHAR(500) NOT NULL,original_name VARCHAR(260) NOT NULL,mime_type VARCHAR(80) NOT NULL,sha256 VARCHAR(64) NOT NULL,size INT UNSIGNED NOT NULL,uploaded_by_id BIGINT NOT NULL,created_at DATETIME(6) NOT NULL,
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,work_id CHAR(32) NOT NULL,
+  validity_mode VARCHAR(16) NOT NULL DEFAULT 'indefinite',valid_from DATE NULL,valid_until DATE NULL,
+  private_path VARCHAR(500) NOT NULL,original_name VARCHAR(260) NOT NULL,mime_type VARCHAR(80) NOT NULL,sha256 VARCHAR(64) NOT NULL,size INT UNSIGNED NOT NULL,uploaded_by_id BIGINT NOT NULL,created_at DATETIME(6) NOT NULL,
+  KEY workevidence_validity_mode_idx(validity_mode),KEY workevidence_valid_until_idx(valid_until),
   CONSTRAINT we_work_fk FOREIGN KEY(work_id) REFERENCES portal_researchwork(id) ON DELETE CASCADE,
   CONSTRAINT we_user_fk FOREIGN KEY(uploaded_by_id) REFERENCES portal_user(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

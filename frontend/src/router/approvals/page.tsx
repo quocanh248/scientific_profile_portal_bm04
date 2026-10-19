@@ -1,0 +1,1063 @@
+import { useEffect, useState, type FormEvent } from "react";
+import {
+  ChevronLeft,
+  ChevronRight,
+  Download,
+  Eye,
+  FileCheck2,
+  Search,
+  ShieldCheck,
+  X,
+} from "lucide-react";
+import {
+  api,
+  download,
+  downloadPost,
+  openInline,
+  type Approval,
+  type ApprovalDetail,
+  type ApprovalPage,
+  type ApprovalVerificationItem,
+  type Lecturer,
+  type ProfileData,
+  type SignatureVerification,
+  type SigningIdentity,
+} from "../../api";
+import {
+  Badge,
+  Card,
+  Empty,
+  Field,
+  datefmt,
+  evidenceState,
+} from "../../components/ui";
+import { askPassword, askText } from "../../dialog";
+import { useApp } from "../../app/AppContext";
+import RelatedCheck from "./RelatedCheck";
+
+export default function ApprovalsPage() {
+  const { user: currentUser, catalog, tell } = useApp();
+  const user = currentUser!;
+  const [items, setItems] = useState<Approval[]>([]),
+    [profile, setProfile] = useState<ProfileData | null>(null),
+    [lecturers, setLecturers] = useState<Lecturer[]>([]);
+  const [identity, setIdentity] = useState<SigningIdentity | null>(null);
+  const [filters, setFilters] = useState({ q: "", status: "", lecturer: "" }),
+    [page, setPage] = useState(1),
+    [pageSize, setPageSize] = useState(10),
+    [total, setTotal] = useState(0),
+    [pages, setPages] = useState(1);
+  const [detail, setDetail] = useState<ApprovalDetail | null>(null),
+    [detailLoading, setDetailLoading] = useState(false);
+  const [builder, setBuilder] = useState({
+    parent_approval_id: "",
+    lecturer_id: "",
+    task_name: "",
+    registered_role: "lead",
+    registered_role_other: "",
+    signing_place: "",
+    signing_date: new Date().toISOString().slice(0, 10),
+    selected_work_ids: [] as string[],
+    selected_ip_ids: [] as string[],
+    selected_application_ids: [] as string[],
+    selected_award_ids: [] as string[],
+  });
+  const canBuild = user.role === "lecturer" || user.role === "admin",
+    canReviewer = user.role === "reviewer" || user.role === "admin",
+    canSigner = user.role === "signer" || user.role === "admin",
+    canIdentity =
+      user.role === "lecturer" ||
+      user.role === "signer" ||
+      user.role === "admin",
+    readOnly = user.role === "viewer_admin";
+  async function loadProfile(id: string) {
+    if (!id) return;
+    try {
+      setProfile(
+        await api<ProfileData>(
+          user.role === "admin" ? `profile/?lecturer_id=${id}` : "profile/",
+        ),
+      );
+    } catch (e) {
+      tell((e as Error).message, true);
+    }
+  }
+  async function loadIdentity() {
+    if (!canIdentity) return;
+    try {
+      setIdentity(await api<SigningIdentity>("signing/identity/"));
+    } catch {
+      setIdentity(null);
+    }
+  }
+  async function loadApprovals(
+    targetPage = page,
+    f = filters,
+    size = pageSize,
+  ) {
+    const q = new URLSearchParams({
+      page: String(targetPage),
+      page_size: String(size),
+    });
+    if (f.q.trim()) q.set("q", f.q.trim());
+    if (f.status) q.set("status", f.status);
+    if (f.lecturer.trim()) q.set("lecturer", f.lecturer.trim());
+    const r = await api<ApprovalPage>(`approvals/?${q.toString()}`);
+    setItems(r.results);
+    setTotal(r.count);
+    setPage(r.page);
+    setPages(Math.max(1, r.pages));
+    setPageSize(r.page_size);
+    if (detail && !r.results.some((x) => x.id === detail.id)) setDetail(null);
+  }
+  async function reload() {
+    try {
+      await loadApprovals(page, filters, pageSize);
+      if (user.role === "lecturer") await loadProfile("self");
+      if (user.role === "admin") {
+        const ls = await api<Lecturer[]>("admin/lecturers/");
+        setLecturers(ls);
+        const id = builder.lecturer_id || ls[0]?.id || "";
+        if (id) {
+          setBuilder((x) => (x.lecturer_id ? x : { ...x, lecturer_id: id }));
+          await loadProfile(id);
+        }
+      }
+      await loadIdentity();
+    } catch (e) {
+      tell((e as Error).message, true);
+    }
+  }
+  useEffect(() => {
+    void reload();
+  }, [user.role]);
+  function toggle(list: keyof typeof builder, id: string, max?: number) {
+    const arr = builder[list] as string[];
+    const next = arr.includes(id) ? arr.filter((x) => x !== id) : [...arr, id];
+    if (max && next.length > max) {
+      tell(`Chỉ được chọn tối đa ${max} mục.`, true);
+      return;
+    }
+    setBuilder({ ...builder, [list]: next });
+  }
+  async function changeLecturer(id: string) {
+    setBuilder({
+      ...builder,
+      lecturer_id: id,
+      selected_work_ids: [],
+      selected_ip_ids: [],
+      selected_application_ids: [],
+      selected_award_ids: [],
+    });
+    setProfile(null);
+    await loadProfile(id);
+  }
+  async function create() {
+    try {
+      let payload: Record<string, unknown> = { ...builder };
+      if (user.role === "lecturer") {
+        if (!identity?.provisioned || !identity?.has_signature_image) {
+          tell(
+            "Hãy tải ảnh chữ ký và cấp danh tính ký số trước khi gửi BM-04.",
+            true,
+          );
+          return;
+        }
+        const password = await askPassword(
+          "Nhập lại mật khẩu để ký số cá nhân và gửi BM-04. Ký tự được ẩn và mật khẩu không được ghi vào nhật ký.",
+        );
+        if (!password) return;
+        payload = { ...payload, password };
+      }
+      await api("approvals/", "POST", payload);
+      setBuilder((x) => ({ ...x, parent_approval_id: "" }));
+      await reload();
+      tell(
+        user.role === "admin"
+          ? "Admin đã tạo và gửi BM-04 thay cho giảng viên (không ký thay chữ ký cá nhân)."
+          : "Đã ký số cá nhân và gửi BM-04 đến Phòng NCKH kiểm tra.",
+      );
+    } catch (e) {
+      tell((e as Error).message, true);
+    }
+  }
+  async function preview() {
+    try {
+      await downloadPost("profile/draft-pdf/", "BM-04-ban-nhap.pdf", builder);
+    } catch (e) {
+      tell((e as Error).message, true);
+    }
+  }
+  async function action(a: Approval, act: string) {
+    const comment = ["changes", "reject"].includes(act)
+      ? (await askText("Nhập lý do trả sửa hoặc từ chối:")) || ""
+      : "";
+    if (["changes", "reject"].includes(act) && !comment) return;
+    try {
+      await api(`approvals/${a.id}/review/`, "POST", { action: act, comment });
+      await reload();
+      if (detail?.id === a.id) await openDetail(a);
+      tell("Đã xử lý hồ sơ.");
+    } catch (e) {
+      tell((e as Error).message, true);
+    }
+  }
+  async function sign(a: Approval) {
+    const password = await askPassword(
+      "Nhập lại mật khẩu tài khoản để xác nhận ký số. Ký tự được ẩn.",
+    );
+    if (!password) return;
+    try {
+      const x = await api<{ verification_code: string }>(
+        `approvals/${a.id}/sign/`,
+        "POST",
+        { password },
+      );
+      await reload();
+      if (detail?.id === a.id) await openDetail(a);
+      tell(`Đã ký số nội bộ. Mã xác thực: ${x.verification_code}`);
+    } catch (e) {
+      tell((e as Error).message, true);
+    }
+  }
+  async function verify(a: Approval) {
+    try {
+      const v = await api<SignatureVerification>(
+        `approvals/${a.id}/verify-signature/`,
+      );
+      const desc = v.signatures
+        .map(
+          (x) =>
+            `${x.signature_role_label}: ${x.signer} (${x.valid ? "hợp lệ" : "không hợp lệ"}) · ${x.verification_code}`,
+        )
+        .join(" | ");
+      tell(
+        `${v.valid ? "Tất cả chữ ký hợp lệ" : "Có chữ ký không hợp lệ"} · ${desc}`,
+        !v.valid,
+      );
+    } catch (e) {
+      tell((e as Error).message, true);
+    }
+  }
+  async function openDetail(a: Approval) {
+    setDetailLoading(true);
+    try {
+      setDetail(await api<ApprovalDetail>(`approvals/${a.id}/`));
+    } catch (e) {
+      tell((e as Error).message, true);
+    } finally {
+      setDetailLoading(false);
+    }
+  }
+  async function reviewItem(item: ApprovalVerificationItem, act: string) {
+    const comment = ["changes", "rejected"].includes(act)
+      ? (await askText("Nhập lý do cho mục xác minh này:")) || ""
+      : "";
+    if (["changes", "rejected"].includes(act) && !comment) return;
+    try {
+      await api(`approvals/${detail?.id}/items/${item.id}/review/`, "POST", {
+        action: act,
+        comment,
+      });
+      if (detail) await openDetail(detail);
+      await loadApprovals(page, filters, pageSize);
+      tell("Đã cập nhật kết quả xác minh từng mục.");
+    } catch (e) {
+      tell((e as Error).message, true);
+    }
+  }
+  async function revise(a: Approval) {
+    try {
+      const d = await api<ApprovalDetail>(`approvals/${a.id}/`);
+      const snap = d.snapshot as any;
+      setBuilder({
+        parent_approval_id: a.id,
+        lecturer_id: a.lecturer_id,
+        task_name: String(snap.task_name || a.task_name),
+        registered_role: String(snap.registered_role || a.registered_role),
+        registered_role_other: String(snap.registered_role_other || ""),
+        signing_place: String(snap.signing_place || ""),
+        signing_date: String(
+          snap.signing_date || new Date().toISOString().slice(0, 10),
+        ),
+        selected_work_ids: (snap.works || []).map((x: any) => String(x.id)),
+        selected_ip_ids: (snap.ip_records || []).map((x: any) => String(x.id)),
+        selected_application_ids: (snap.practical_applications || []).map(
+          (x: any) => String(x.id),
+        ),
+        selected_award_ids: (snap.awards || []).map((x: any) => String(x.id)),
+      });
+      await loadProfile("self");
+      tell(
+        `Đã nạp dữ liệu từ ${a.code}. Hãy cập nhật lý lịch/minh chứng nếu cần, kiểm tra lựa chọn và ký gửi phiên bản mới.`,
+      );
+    } catch (e) {
+      tell((e as Error).message, true);
+    }
+  }
+  async function applyFilters(e?: FormEvent) {
+    e?.preventDefault();
+    try {
+      await loadApprovals(1, filters, pageSize);
+    } catch (ex) {
+      tell((ex as Error).message, true);
+    }
+  }
+  async function resetFilters() {
+    const f = { q: "", status: "", lecturer: "" };
+    setFilters(f);
+    setDetail(null);
+    try {
+      await loadApprovals(1, f, pageSize);
+    } catch (ex) {
+      tell((ex as Error).message, true);
+    }
+  }
+  async function gotoPage(n: number) {
+    if (n < 1 || n > pages || n === page) return;
+    try {
+      await loadApprovals(n, filters, pageSize);
+    } catch (ex) {
+      tell((ex as Error).message, true);
+    }
+  }
+  return (
+    <>
+      <div className="page-heading">
+        <span className="eyebrow blue">BM-04</span>
+        <h1>In, phê duyệt và ký số nội bộ</h1>
+        <p>
+          {readOnly
+            ? "Admin xem chỉ được xem, kiểm tra chữ ký và tải hồ sơ."
+            : user.role === "admin"
+              ? "Admin có thể tạo, kiểm tra, phê duyệt và ký bằng danh tính ký số của chính tài khoản Admin."
+              : "Mỗi hồ sơ BM-04 được chốt dữ liệu, phê duyệt và ký số trong mạng nội bộ."}
+        </p>
+      </div>
+      {canIdentity &&
+        (!identity?.provisioned || !identity?.has_signature_image) && (
+          <div className="alert">
+            Bạn chưa hoàn tất cấu hình chữ ký số. Hãy vào menu{" "}
+            <strong>Quản lý chữ ký</strong> trước khi ký hoặc gửi BM-04.
+          </div>
+        )}
+      {canBuild && profile && (
+        <Card
+          title={
+            builder.parent_approval_id
+              ? "Tạo phiên bản BM-04 mới sau khi trả sửa"
+              : user.role === "admin"
+                ? "Admin tạo hồ sơ BM-04 cho giảng viên"
+                : "Tạo hồ sơ BM-04"
+          }
+        >
+          {user.role === "admin" && (
+            <Field label="Giảng viên">
+              <select
+                value={builder.lecturer_id}
+                onChange={(e) => void changeLecturer(e.target.value)}
+              >
+                {lecturers.map((l) => (
+                  <option key={l.id} value={l.id}>
+                    {l.staff_code} — {l.full_name} — {l.department}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          )}
+          <div className="form-grid">
+            <Field label="Tên nhiệm vụ KH,CN&ĐMST">
+              <input
+                value={builder.task_name}
+                onChange={(e) =>
+                  setBuilder({ ...builder, task_name: e.target.value })
+                }
+              />
+            </Field>
+            <Field label="Chức danh đăng ký">
+              <select
+                value={builder.registered_role}
+                onChange={(e) =>
+                  setBuilder({ ...builder, registered_role: e.target.value })
+                }
+              >
+                {catalog.registered_roles.map((x) => (
+                  <option key={x.value} value={x.value}>
+                    {x.label}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            {builder.registered_role === "other" && (
+              <Field label="Ghi rõ chức danh khác">
+                <input
+                  value={builder.registered_role_other}
+                  onChange={(e) =>
+                    setBuilder({
+                      ...builder,
+                      registered_role_other: e.target.value,
+                    })
+                  }
+                />
+              </Field>
+            )}
+            <Field label="Địa danh ký">
+              <input
+                placeholder="Ví dụ: Thành phố Hồ Chí Minh"
+                value={builder.signing_place}
+                onChange={(e) =>
+                  setBuilder({ ...builder, signing_place: e.target.value })
+                }
+              />
+            </Field>
+            <Field label="Ngày lập">
+              <input
+                type="date"
+                value={builder.signing_date}
+                onChange={(e) =>
+                  setBuilder({ ...builder, signing_date: e.target.value })
+                }
+              />
+            </Field>
+          </div>
+          <h4>
+            Mục 10 — Chọn tối đa 05 công trình tiêu biểu (
+            {builder.selected_work_ids.length}/5)
+          </h4>
+          <div className="check-list">
+            {profile.my_works.length ? (
+              profile.my_works.map((w) => (
+                <label key={w.id}>
+                  <input
+                    type="checkbox"
+                    checked={builder.selected_work_ids.includes(w.id)}
+                    onChange={() => toggle("selected_work_ids", w.id, 5)}
+                  />
+                  <span>
+                    <strong>{w.title}</strong>
+                    <small>
+                      {w.publication_year} · {w.venue || "—"} ·{" "}
+                      {w.my_authorship_label}
+                    </small>
+                  </span>
+                </label>
+              ))
+            ) : (
+              <p className="muted">Chưa có công trình trong hồ sơ.</p>
+            )}
+          </div>
+          <div className="two-cols">
+            <RelatedCheck
+              title="Mục 11 — SHTT liên quan đến nhiệm vụ"
+              items={profile.ip_records.map((x) => ({
+                id: String(x.id),
+                label: `${x.title_content} (${x.grant_year})`,
+              }))}
+              selected={builder.selected_ip_ids}
+              onToggle={(id) => toggle("selected_ip_ids", id)}
+            />
+            <RelatedCheck
+              title="Mục 12 — Ứng dụng thực tiễn liên quan"
+              items={profile.practical_applications.map((x) => ({
+                id: String(x.id),
+                label: x.work_name,
+              }))}
+              selected={builder.selected_application_ids}
+              onToggle={(id) => toggle("selected_application_ids", id)}
+            />
+          </div>
+          <RelatedCheck
+            title="Mục 14 — Giải thưởng liên quan đến nhiệm vụ"
+            items={profile.awards.map((x) => ({
+              id: String(x.id),
+              label: `${x.description} (${x.award_year})`,
+            }))}
+            selected={builder.selected_award_ids}
+            onToggle={(id) => toggle("selected_award_ids", id)}
+          />
+          <div className="alert">
+            Mục 13 và mục 15 lấy đầy đủ từ lý lịch đã lưu. Mục 16 là nội dung
+            cam kết cố định.
+          </div>
+          <div className="action-row">
+            <button className="secondary" onClick={() => void preview()}>
+              <Download size={17} /> Tải bản nháp
+            </button>
+            <button className="primary" onClick={() => void create()}>
+              <FileCheck2 size={17} />{" "}
+              {user.role === "lecturer"
+                ? "Ký số & gửi yêu cầu xác nhận"
+                : "Gửi yêu cầu xác nhận"}
+            </button>
+          </div>
+        </Card>
+      )}
+      <Card title="Tìm kiếm và lọc hồ sơ">
+        <form
+          className="approval-filter-grid"
+          onSubmit={(e) => void applyFilters(e)}
+        >
+          <Field label="Từ khóa">
+            <div className="search-box approval-search">
+              <Search size={16} />
+              <input
+                placeholder="Mã BM-04 hoặc tên nhiệm vụ"
+                value={filters.q}
+                onChange={(e) => setFilters({ ...filters, q: e.target.value })}
+              />
+            </div>
+          </Field>
+          <Field label="Giảng viên">
+            <input
+              placeholder="Tên hoặc mã giảng viên"
+              value={filters.lecturer}
+              onChange={(e) =>
+                setFilters({ ...filters, lecturer: e.target.value })
+              }
+            />
+          </Field>
+          <Field label="Trạng thái">
+            <select
+              value={filters.status}
+              onChange={(e) =>
+                setFilters({ ...filters, status: e.target.value })
+              }
+            >
+              <option value="">Tất cả trạng thái</option>
+              <option value="review">Chờ NCKH</option>
+              <option value="signer">Chờ lãnh đạo</option>
+              <option value="print">Chờ ký số nội bộ</option>
+              <option value="completed">Hoàn tất</option>
+              <option value="signed">Chờ lưu scan (legacy)</option>
+              <option value="changes">Cần bổ sung</option>
+              <option value="rejected">Từ chối</option>
+            </select>
+          </Field>
+          <Field label="Số dòng / trang">
+            <select
+              value={pageSize}
+              onChange={(e) => {
+                const n = Number(e.target.value);
+                setPageSize(n);
+                void loadApprovals(1, filters, n);
+              }}
+            >
+              <option value={10}>10</option>
+              <option value={20}>20</option>
+              <option value={50}>50</option>
+            </select>
+          </Field>
+          <div className="approval-filter-actions">
+            <button className="primary" type="submit">
+              <Search size={16} /> Tìm kiếm
+            </button>
+            <button
+              className="secondary"
+              type="button"
+              onClick={() => void resetFilters()}
+            >
+              Đặt lại
+            </button>
+          </div>
+        </form>
+      </Card>
+      {(detailLoading || detail) && (
+        <div
+          className="modal-backdrop"
+          onMouseDown={(e) => {
+            if (e.currentTarget === e.target) {
+              setDetail(null);
+              setDetailLoading(false);
+            }
+          }}
+        >
+          <div className="modal approval-detail-modal">
+            <div className="modal-header">
+              <div>
+                <span className="eyebrow blue">
+                  LIÊN KẾT BM-04 → CÔNG TRÌNH KHOA HỌC
+                </span>
+                <h2>{detail?.code || "Đang tải chi tiết..."}</h2>
+              </div>
+              <button
+                className="icon-btn"
+                onClick={() => {
+                  setDetail(null);
+                  setDetailLoading(false);
+                }}
+              >
+                <X size={20} />
+              </button>
+            </div>
+            <div className="modal-body">
+              {detailLoading ? (
+                <div className="loading-inline">Đang tải chi tiết BM-04...</div>
+              ) : (
+                detail && (
+                  <>
+                    <div className="approval-detail-head">
+                      <div>
+                        <span className="eyebrow blue">GIẢNG VIÊN</span>
+                        <strong>
+                          {detail.lecturer_code} — {detail.lecturer}
+                        </strong>
+                        <small>{detail.lecturer_department}</small>
+                      </div>
+                      <div>
+                        <span className="eyebrow blue">NHIỆM VỤ</span>
+                        <strong>{detail.task_name}</strong>
+                        <small>Gửi ngày {datefmt(detail.submitted_at)}</small>
+                      </div>
+                      <div>
+                        <span className="eyebrow blue">TRẠNG THÁI</span>
+                        <Badge status={detail.status} />
+                      </div>
+                    </div>
+                    <div className="action-row">
+                      <button
+                        className="secondary"
+                        onClick={() =>
+                          openInline(`approvals/${detail.id}/pdf/?inline=1`)
+                        }
+                      >
+                        <Eye size={15} /> Xem BM-04
+                      </button>
+                      <button
+                        className="secondary"
+                        onClick={() =>
+                          void download(
+                            `approvals/${detail.id}/pdf/`,
+                            `${detail.code}.pdf`,
+                          )
+                        }
+                      >
+                        <Download size={15} /> Tải BM-04
+                      </button>
+                    </div>
+                    <h4>
+                      Checklist xác minh theo từng mục BM-04 (
+                      {detail.verification_verified}/{detail.verification_total}
+                      )
+                    </h4>
+                    <div className="verification-checklist">
+                      {detail.verification_items.length === 0 ? (
+                        <Empty text="Hồ sơ này chưa có checklist xác minh (dữ liệu legacy)." />
+                      ) : (
+                        detail.verification_items.map((v) => (
+                          <div className="verification-item" key={v.id}>
+                            <div className="verification-item-head">
+                              <div>
+                                <strong>{v.section_label}</strong>
+                                <span>{v.label}</span>
+                                <small>
+                                  {v.reused
+                                    ? "✓ Tái sử dụng kết quả xác minh trước vì dữ liệu và minh chứng không thay đổi."
+                                    : v.evidence_required
+                                      ? "Minh chứng bắt buộc"
+                                      : "Minh chứng không bắt buộc"}
+                                </small>
+                              </div>
+                              <Badge status={v.status} />
+                            </div>
+                            <div className="evidence-list">
+                              {v.evidence.length === 0 ? (
+                                <span className="muted small">
+                                  Không có minh chứng đính kèm.
+                                </span>
+                              ) : (
+                                v.evidence.map((ev) => {
+                                  const st = evidenceState(ev);
+                                  const evidenceBase =
+                                    v.section === "work"
+                                      ? `evidence/${ev.id}`
+                                      : `profile/evidence/${ev.id}`;
+                                  return (
+                                    <div
+                                      className="evidence-row evidence-row-rich"
+                                      key={ev.id}
+                                    >
+                                      <div className="evidence-main">
+                                        <span>{ev.original_name}</span>
+                                        <small
+                                          className={`evidence-validity evidence-${st.key}`}
+                                        >
+                                          {st.label}
+                                        </small>
+                                      </div>
+                                      <div className="mini-actions">
+                                        <button
+                                          onClick={() =>
+                                            openInline(`${evidenceBase}/view/`)
+                                          }
+                                        >
+                                          <Eye size={14} /> Xem
+                                        </button>
+                                        <button
+                                          onClick={() =>
+                                            void download(
+                                              `${evidenceBase}/download/`,
+                                              ev.original_name,
+                                            )
+                                          }
+                                        >
+                                          <Download size={14} /> Tải
+                                        </button>
+                                      </div>
+                                    </div>
+                                  );
+                                })
+                              )}
+                            </div>
+                            {v.comment && (
+                              <p className="verification-comment">
+                                {v.comment}
+                              </p>
+                            )}
+                            {canReviewer &&
+                              detail.status === "review" &&
+                              !readOnly &&
+                              v.status !== "verified" && (
+                                <>
+                                  <div className="action-row">
+                                    <button
+                                      className="primary"
+                                      disabled={
+                                        (v.evidence_required &&
+                                          v.evidence.length === 0) ||
+                                        v.evidence.some(
+                                          (ev) => evidenceState(ev).invalid,
+                                        )
+                                      }
+                                      title={
+                                        v.evidence_required &&
+                                        v.evidence.length === 0
+                                          ? "Mục này bắt buộc có minh chứng xác minh trước khi xác minh"
+                                          : v.evidence.some(
+                                                (ev) =>
+                                                  evidenceState(ev).invalid,
+                                              )
+                                            ? "Có minh chứng đã hết hiệu lực hoặc chưa có hiệu lực"
+                                            : ""
+                                      }
+                                      onClick={() =>
+                                        void reviewItem(v, "verified")
+                                      }
+                                    >
+                                      Xác minh
+                                    </button>
+                                  </div>
+                                  {v.evidence_required &&
+                                    v.evidence.length === 0 && (
+                                      <p className="verification-warning">
+                                        Chưa có minh chứng xác minh. Hãy dùng
+                                        nút <strong>Trả sửa</strong> ở cấp hồ sơ
+                                        BM-04 để giảng viên bổ sung minh chứng
+                                        và tạo phiên bản mới.
+                                      </p>
+                                    )}
+                                </>
+                              )}
+                          </div>
+                        ))
+                      )}
+                    </div>
+                    {/* <h4>Nhật ký cập nhật liên quan giảng viên</h4>
+                    <div className="audit-mini">
+                      {detail.lecturer_logs.length === 0 ? (
+                        <span className="muted small">Chưa có nhật ký.</span>
+                      ) : (
+                        detail.lecturer_logs.slice(0, 30).map((x, i) => (
+                          <div className="record" key={i}>
+                            <div>
+                              <strong>{x.action}</strong>
+                              <small>
+                                {x.actor || "Hệ thống"} · {x.entity}{" "}
+                                {x.entity_id || ""}
+                              </small>
+                            </div>
+                            <small>
+                              {new Date(x.at).toLocaleString("vi-VN")}
+                            </small>
+                          </div>
+                        ))
+                      )}
+                    </div> */}
+                    <h4>
+                      Công trình khoa học được sử dụng trong BM-04 (
+                      {detail.linked_works.length})
+                    </h4>
+                    {detail.linked_works.length === 0 ? (
+                      <Empty text="BM-04 này không chọn công trình khoa học tiêu biểu." />
+                    ) : (
+                      <div className="approval-work-list">
+                        {detail.linked_works.map((w, i) => (
+                          <div className="approval-work" key={w.id}>
+                            <div className="approval-work-title">
+                              <span>{i + 1}</span>
+                              <div>
+                                <strong>{w.title}</strong>
+                                <small>
+                                  {w.work_type} · {w.publication_year} ·{" "}
+                                  {w.venue || "Chưa ghi nơi công bố"}
+                                </small>
+                              </div>
+                              {/* <Badge status={w.status} /> */}
+                            </div>
+                            <div className="work-meta-grid">
+                              <span>
+                                <b>DOI:</b> {w.doi || "—"}
+                              </span>
+                              <span>
+                                <b>Tác giả:</b>{" "}
+                                {w.authors.map((a) => a.name).join(", ") || "—"}
+                              </span>
+                            </div>
+                            <div className="evidence-list">
+                              <b>
+                                Minh chứng công trình khoa học tại thời điểm gửi
+                                (bắt buộc):
+                              </b>
+                              {(w.verification_evidence || w.evidence || [])
+                                .length === 0 ? (
+                                <span className="muted">
+                                  {" "}
+                                  Không có minh chứng.
+                                </span>
+                              ) : (
+                                (
+                                  w.verification_evidence ||
+                                  w.evidence ||
+                                  []
+                                ).map((ev) => {
+                                  const st = evidenceState(ev);
+                                  return (
+                                    <div
+                                      className="evidence-row evidence-row-rich"
+                                      key={ev.id}
+                                    >
+                                      <div className="evidence-main">
+                                        <span>{ev.original_name}</span>
+                                        <small
+                                          className={`evidence-validity evidence-${st.key}`}
+                                        >
+                                          {st.label}
+                                        </small>
+                                      </div>
+                                      <div className="mini-actions">
+                                        <button
+                                          onClick={() =>
+                                            openInline(
+                                              `evidence/${ev.id}/view/`,
+                                            )
+                                          }
+                                        >
+                                          <Eye size={14} /> Xem
+                                        </button>
+                                        <button
+                                          onClick={() =>
+                                            void download(
+                                              `evidence/${ev.id}/download/`,
+                                              ev.original_name,
+                                            )
+                                          }
+                                        >
+                                          <Download size={14} /> Tải
+                                        </button>
+                                      </div>
+                                    </div>
+                                  );
+                                })
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                )
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+      <Card title={`Danh sách hồ sơ BM-04 (${total})`}>
+        <div className="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Mã</th>
+                <th>Giảng viên</th>
+                <th>Nhiệm vụ</th>
+                <th>Chức danh</th>
+                <th>Trạng thái</th>
+                <th>Thao tác</th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.length === 0 ? (
+                <tr>
+                  <td colSpan={6}>
+                    <Empty text="Không có hồ sơ phù hợp bộ lọc." />
+                  </td>
+                </tr>
+              ) : (
+                items.map((a) => (
+                  <tr key={a.id}>
+                    <td>
+                      <button
+                        className="code-link"
+                        title="Xem công trình và minh chứng của BM-04"
+                        onClick={() => void openDetail(a)}
+                      >
+                        {a.code}
+                      </button>
+                    </td>
+                    <td>{a.lecturer}</td>
+                    <td>{a.task_name}</td>
+                    <td>{a.registered_role_label}</td>
+                    <td>
+                      <Badge status={a.status} />
+                    </td>
+                    <td>
+                      <div className="action-row">
+                        <button
+                          className="link-button"
+                          onClick={() =>
+                            openInline(`approvals/${a.id}/pdf/?inline=1`)
+                          }
+                        >
+                          <Eye size={15} /> Xem BM-04
+                        </button>
+                        <button
+                          className="link-button"
+                          onClick={() =>
+                            void download(
+                              `approvals/${a.id}/pdf/`,
+                              `${a.code}.pdf`,
+                            )
+                          }
+                        >
+                          <Download size={15} /> Tải
+                        </button>
+                        {a.has_personal_signature && (
+                          <span className="signature-mini">
+                            <ShieldCheck size={14} /> GV đã ký
+                          </span>
+                        )}
+                        {a.has_signed_pdf && (
+                          <>
+                            <button
+                              className="link-button"
+                              onClick={() =>
+                                openInline(`approvals/${a.id}/signed/?inline=1`)
+                              }
+                            >
+                              <ShieldCheck size={15} /> Xem bản ký
+                            </button>
+                            <button
+                              className="link-button"
+                              onClick={() => void verify(a)}
+                            >
+                              Kiểm tra chữ ký
+                            </button>
+                          </>
+                        )}
+                        {a.has_scan && (
+                          <button
+                            className="link-button"
+                            onClick={() =>
+                              openInline(`approvals/${a.id}/scan/?inline=1`)
+                            }
+                          >
+                            Xem scan
+                          </button>
+                        )}
+                        {user.role === "lecturer" &&
+                          ["changes", "rejected"].includes(a.status) && (
+                            <button
+                              className="secondary"
+                              onClick={() => void revise(a)}
+                            >
+                              Tạo phiên bản mới & ký lại
+                            </button>
+                          )}
+                        {canReviewer && a.status === "review" && (
+                          <>
+                            <button
+                              className="link-button"
+                              disabled={!a.verification_complete}
+                              title={
+                                !a.verification_complete
+                                  ? "Cần xác minh đủ các mục trước"
+                                  : ""
+                              }
+                              onClick={() => void action(a, "forward")}
+                            >
+                              Chuyển lãnh đạo ({a.verification_verified}/
+                              {a.verification_total})
+                            </button>
+                            <button
+                              className="link-button"
+                              onClick={() => void action(a, "changes")}
+                            >
+                              Trả sửa
+                            </button>
+                          </>
+                        )}
+                        {canSigner && a.status === "signer" && (
+                          <>
+                            <button
+                              className="link-button"
+                              onClick={() => void action(a, "approve")}
+                            >
+                              Phê duyệt
+                            </button>
+                            <button
+                              className="link-button"
+                              onClick={() => void action(a, "changes")}
+                            >
+                              Trả sửa
+                            </button>
+                          </>
+                        )}
+                        {canSigner && a.status === "print" && (
+                          <button
+                            className="primary"
+                            onClick={() => void sign(a)}
+                          >
+                            <ShieldCheck size={15} /> Ký số
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+        <div className="pagination">
+          <span>
+            Hiển thị {items.length} / {total} hồ sơ · Trang {page}/{pages}
+          </span>
+          <div>
+            <button
+              className="secondary"
+              disabled={page <= 1}
+              onClick={() => void gotoPage(page - 1)}
+            >
+              <ChevronLeft size={15} /> Trước
+            </button>
+            <button
+              className="secondary"
+              disabled={page >= pages}
+              onClick={() => void gotoPage(page + 1)}
+            >
+              Sau <ChevronRight size={15} />
+            </button>
+          </div>
+        </div>
+      </Card>
+    </>
+  );
+}
