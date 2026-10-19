@@ -36,3 +36,4 @@ Nếu database được khởi tạo bằng `database/bm04_dev_full.sql`, không
 ## V6.3 DEV — Minh chứng có thời hạn
 
 V6.3 sửa lỗi upload minh chứng 500, bổ sung Vô thời hạn/Có thời hạn, cảnh báo trước 30 ngày, chặn xác minh minh chứng hết hạn, và cho phép một minh chứng liên kết với nhiều thông tin. Xem `docs/CHANGELOG_V6_3_EVIDENCE_VALIDITY.md`.
+"# scientific_profile_portal_bm04" 
