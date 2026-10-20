@@ -95,23 +95,15 @@ def stable_hash(value):
 
 
 def evidence_payload(x, as_of=None):
-    """Serialize minh chứng kèm trạng thái hiệu lực tại một ngày cụ thể."""
-    as_of = as_of or timezone.localdate()
-    status = 'indefinite'
+    """Serialize minh chứng.
+
+    V8 tạm khóa nghiệp vụ thời hạn: vẫn giữ lựa chọn `fixed`/`indefinite`
+    để không phá cấu trúc dữ liệu, nhưng không đánh giá ngày hiệu lực, không
+    cảnh báo và không chặn xác minh. Khi bật lại tính năng có thể phục hồi
+    logic kiểm tra ngày mà không cần đổi schema.
+    """
+    status = 'fixed_disabled' if x.validity_mode == EvidenceDocument.ValidityMode.FIXED else 'indefinite'
     days_remaining = None
-    if x.validity_mode == EvidenceDocument.ValidityMode.FIXED:
-        if x.valid_from and as_of < x.valid_from:
-            status = 'not_yet_valid'
-        elif x.valid_until:
-            days_remaining = (x.valid_until - as_of).days
-            if days_remaining < 0:
-                status = 'expired'
-            elif days_remaining <= 30:
-                status = 'expiring'
-            else:
-                status = 'valid'
-        else:
-            status = 'invalid_config'
     return {
         'id': x.pk, 'original_name': x.original_name, 'mime_type': x.mime_type,
         'sha256': x.sha256, 'size': x.size, 'created_at': x.created_at.isoformat(),
@@ -313,7 +305,7 @@ def audit(actor, action, entity, entity_id='', lecturer=None, **details):
     entry = AuditLog.objects.create(actor=actor, lecturer=lecturer, action=action, entity=entity, entity_id=str(entity_id), details=details)
     work_events = {
         'create_work': 'Công trình mới', 'update_work': 'Chỉnh sửa công trình',
-        'upload_evidence': 'Bổ sung tài liệu đính kèm công trình', 'submit_work': 'Gửi kiểm tra công trình',
+        'upload_evidence': 'Bổ sung minh chứng công trình', 'submit_work': 'Gửi kiểm tra công trình',
         'review_work': 'Kết quả kiểm tra công trình', 'review_link': 'Duyệt liên kết tác giả',
         'review_correction': 'Duyệt sửa công trình', 'create_correction': 'Yêu cầu sửa công trình',
         'create_link': 'Yêu cầu liên kết tác giả',

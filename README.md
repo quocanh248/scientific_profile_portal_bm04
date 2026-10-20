@@ -1,16 +1,13 @@
-# Scientific Profile Portal BM-04 — V7 DEV (Route-based Frontend)
+# Scientific Profile Portal BM-04 — V8 DEV
 
-**Mục tiêu của bản này:** kiểm thử nghiệp vụ trên môi trường DEV trước khi đóng Docker production.
+Mục tiêu: kiểm thử nghiệp vụ trên môi trường DEV trước khi đóng gói production.
 
-Stack DEV: React + TypeScript / Django REST / MySQL 8 / private file storage.
+Stack: React + TypeScript / Django REST / MySQL 8 / private file storage.
 
-## V7 DEV — Tổ chức frontend theo URL / thư mục
-
-V7 **không thay đổi backend, database hay nghiệp vụ V6.4**. Phần frontend được tách từ một `App.tsx` lớn thành cấu trúc route gần giống Next.js:
+## Cấu trúc route frontend
 
 - `/` → `frontend/src/router/page.tsx`
 - `/profile` → `frontend/src/router/profile/page.tsx`
-- `/works` → `frontend/src/router/works/page.tsx`
 - `/approvals` → `frontend/src/router/approvals/page.tsx`
 - `/signature` → `frontend/src/router/signature/page.tsx`
 - `/reports` → `frontend/src/router/reports/page.tsx`
@@ -18,47 +15,38 @@ V7 **không thay đổi backend, database hay nghiệp vụ V6.4**. Phần front
 - `/password` → `frontend/src/router/password/page.tsx`
 - `/login` → `frontend/src/router/login/page.tsx`
 
-`page.tsx` là file mặc định của một route. File phụ trợ đặt tên theo chức năng, ví dụ `profile/EvidenceSection.tsx`, `approvals/RelatedCheck.tsx`. Vì đây là Vite chứ không phải Next.js, `frontend/src/router/index.tsx` giữ bảng ánh xạ route thực tế.
+Route `/works` được giữ như đường dẫn tương thích cũ nhưng tự chuyển về `/profile`.
+Công trình khoa học hiện được quản lý trực tiếp tại Mục 10 của Lý lịch BM-04.
 
-Trang **Quản lý chữ ký** đã được tách khỏi trang **In & phê duyệt BM-04**, nhưng vẫn dùng nguyên API ký số cũ.
+## V8 — thay đổi nghiệp vụ
 
-Xem `docs/FRONTEND_ROUTER_STRUCTURE_V7.md`.
+1. Trường chọn loại công trình hiển thị nhãn **DM nhiệm vụ khoa học**.
+2. Công trình khoa học được thêm/sửa và tải minh chứng ngay trong `/profile`.
+3. Không còn bước gửi công trình riêng cho Phòng NCKH xác minh. NCKH chỉ xác minh công trình khi công trình nằm trong snapshot của một hồ sơ tạo từ **In & phê duyệt BM-04**.
+4. Minh chứng công trình vẫn bắt buộc trước khi chọn công trình để tạo BM-04.
+5. Lựa chọn thời hạn vẫn có `Vô thời hạn` và `Có thời hạn`, nhưng kiểm tra thời gian đang tạm khóa. `Có thời hạn` hiện không yêu cầu ngày, không cảnh báo và không chặn xác minh.
+6. Import giảng viên sinh mật khẩu tạm. Mật khẩu chỉ trả về ngay sau import, có thể xuất Excel ngay, không lưu plaintext. Tài khoản còn `must_change_password=True` hiển thị **Chưa kích hoạt/Chưa đổi mật khẩu** và Admin có thể sinh lại mật khẩu tạm.
+7. Quản trị cơ quan/phòng ban có template Excel + import Excel; mã đơn vị có sẵn được cập nhật, mã mới được tạo.
+8. Màn hình đăng nhập đổi `Hồ sơ khoa học` thành `Lý lịch khoa học`.
+9. Danh mục `portal_worktype` ngừng hiển thị khi tạo mới: `Sách chuyên khảo`, `Đề tài khoa học học viên`, `Chuyên đề khoa học học viên`, `Sáng kiến`. Dữ liệu cũ không bị xóa.
+10. `Bài kỷ yếu hội thảo khoa học` đổi thành **Bài kỷ yếu hội thảo khoa học (khi có ISO)**.
 
-## Thay đổi trọng tâm
+## Nâng V7 → V8
 
-- Tách **tài liệu đính kèm công trình** (tùy chọn) khỏi **minh chứng xác minh BM-04**.
-- Minh chứng xác minh gắn trực tiếp với từng dữ liệu: đào tạo, quá trình công tác (không bắt buộc), công trình, SHTT, ứng dụng thực tiễn, nhiệm vụ KH,CN&ĐMST, giải thưởng, thành tựu khác.
-- Phòng NCKH mở BM-04 và xác minh theo checklist từng mục, xem minh chứng ngay tại chỗ.
-- Kết quả xác minh cũ được tái sử dụng khi cả dữ liệu và minh chứng không thay đổi.
-- Mỗi lần gửi tạo snapshot dữ liệu + minh chứng bất biến; BM-04 cũ không đổi khi hồ sơ hiện tại được cập nhật.
-- Hồ sơ bị trả sửa tạo version mới và giảng viên ký lại.
-- Log tra cứu theo giảng viên, người thao tác, loại hành động và khoảng thời gian.
-- Thông báo/xác nhận/nhập lý do/mật khẩu ký số dùng modal, không dùng browser alert/confirm/prompt.
+Không có thay đổi schema database nên không cần Django migration mới.
 
-## Chạy DEV
+Sau khi sao lưu database, chạy:
 
-Đọc `docs/README_DEV_V6.md`.
+```bat
+dev\upgrade_v7_to_v8.bat
+```
 
-## Database DEV
+Script chỉ cập nhật trạng thái/tên danh mục `portal_worktype`, không xóa công trình lịch sử.
 
-- `database/bm04_dev_schema.sql`: schema V6.
-- `database/bm04_dev_seed.sql`: dữ liệu danh mục ban đầu.
-- `database/bm04_dev_full.sql`: schema + seed, import một lần.
-- `database/bm04_v5_to_v6_upgrade.sql`: script nâng DB V5 hiện hữu, dùng một lần sau khi backup.
+## Khởi tạo database DEV mới
 
-## Docker
+`dev\init_db_dev.bat` sử dụng `database\bm04_dev_full_v8.sql`.
 
-**Không có Docker production trong gói V6 DEV.** Sau khi kiểm thử và chốt nghiệp vụ, mới tạo bản Docker riêng.
+## Bảo mật mật khẩu tạm
 
-## V6.2 – lưu ý migration cho DEV SQL
-Nếu database được khởi tạo bằng `database/bm04_dev_full.sql`, không dùng trực tiếp `migrate --fake-initial`. Bản V6.2 đã sửa `dev/run_backend_dev.bat` để đồng bộ migration state đúng thứ tự. Với database V6/V6.1 đã tạo, chạy một lần `dev\repair_prebuilt_db_migrations.bat` rồi chạy backend bình thường.
-
-## V6.3 DEV — Minh chứng có thời hạn
-
-V6.3 sửa lỗi upload minh chứng 500, bổ sung Vô thời hạn/Có thời hạn, cảnh báo trước 30 ngày, chặn xác minh minh chứng hết hạn, và cho phép một minh chứng liên kết với nhiều thông tin. Xem `docs/CHANGELOG_V6_3_EVIDENCE_VALIDITY.md`.
-
-## V6.4 DEV — Minh chứng công trình khoa học
-
-Từ V6.4, file tải ở mục **Công trình khoa học** là **minh chứng bắt buộc** và được
-sử dụng trực tiếp trong checklist xác minh BM-04. Trước khi chạy source V6.4 trên
-DB V6.3.x, chạy `dev\upgrade_v6_3_to_v6_4.bat` sau khi sao lưu database.
+Django chỉ lưu password hash. Mật khẩu tạm không thể đọc ngược từ database. File Excel mật khẩu tạm được tạo trong bộ nhớ ngay sau import và gửi về trình duyệt; backend không lưu file/mật khẩu plaintext. Sau khi reload trang, mật khẩu tạm cũ không còn xem lại được; nếu tài khoản vẫn chưa đổi mật khẩu, Admin có thể dùng **Đặt lại mật khẩu tạm**.

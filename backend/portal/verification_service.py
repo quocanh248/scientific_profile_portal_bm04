@@ -42,26 +42,11 @@ def evidence_hash(items):
 
 
 def evidence_usable(items, as_of=None):
-    """Minh chứng có thể dùng để xác minh tại thời điểm hiện tại hay không."""
-    as_of = as_of or timezone.localdate()
-    for ev in items or []:
-        if (ev.get('validity_mode') or 'indefinite') != 'fixed':
-            continue
-        start = ev.get('valid_from')
-        end = ev.get('valid_until')
-        if start:
-            try:
-                if as_of < date.fromisoformat(start):
-                    return False
-            except (TypeError, ValueError):
-                return False
-        if not end:
-            return False
-        try:
-            if as_of > date.fromisoformat(end):
-                return False
-        except (TypeError, ValueError):
-            return False
+    """V8: kiểm tra thời hạn minh chứng đang tạm khóa.
+
+    `validity_mode=fixed` vẫn được lưu/hiển thị nhưng không làm phát sinh
+    điều kiện ngày bắt đầu/ngày hết hạn và không chặn xác minh BM-04.
+    """
     return True
 
 def _label(section, item):
@@ -188,8 +173,6 @@ def review_item(item, reviewer, action, comment=''):
 
     if action == 'verified' and item.evidence_required and not evidence:
         raise ValueError('Mục này bắt buộc có ít nhất một minh chứng trước khi xác minh.')
-    if action == 'verified' and evidence and not evidence_usable(evidence):
-        raise ValueError('Có minh chứng đã hết hiệu lực hoặc chưa có hiệu lực. Không thể xác minh cho BM-04 mới; vui lòng yêu cầu giảng viên bổ sung minh chứng hợp lệ.')
     item.status = action
     item.reviewer = reviewer
     item.reviewed_at = timezone.now()

@@ -4,18 +4,14 @@ from portal.models import User, WorkType, Department
 
 WORK_TYPES = [
     ('textbook', 'Giáo trình'),
-    ('monograph', 'Sách chuyên khảo'),
     ('reference_book', 'Sách tham khảo'),
     ('professional_casebook', 'Bài tập tình huống nghiệp vụ'),
     ('national_project', 'Đề tài khoa học cấp quốc gia'),
     ('ministerial_project', 'Đề tài khoa học cấp bộ'),
     ('provincial_project', 'Đề tài khoa học cấp tỉnh/thành phố'),
     ('institutional_project', 'Đề tài khoa học cấp cơ sở'),
-    ('student_project', 'Đề tài khoa học học viên'),
-    ('student_scientific_topic', 'Chuyên đề khoa học học viên'),
     ('journal_article', 'Bài báo khoa học'),
-    ('conference_proceedings', 'Bài kỷ yếu hội thảo khoa học'),
-    ('initiative', 'Sáng kiến'),
+    ('conference_proceedings', 'Bài kỷ yếu hội thảo khoa học (khi có ISO)'),
 ]
 
 

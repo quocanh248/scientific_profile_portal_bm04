@@ -5,14 +5,10 @@ import {labels,type EvidenceDocument} from '../api'
 export const currentYear=new Date().getFullYear()
 export function datefmt(s?:string|null){return s?new Date(s).toLocaleDateString('vi-VN'):'—'}
 export function evidenceState(ev:EvidenceDocument){
- if(ev.validity_mode!=='fixed')return {key:'indefinite',label:'∞ Vô thời hạn',invalid:false}
- if(ev.valid_from){const start=new Date(`${ev.valid_from}T00:00:00`);const now=new Date();now.setHours(0,0,0,0);if(now<start)return {key:'not-yet-valid',label:`Chưa có hiệu lực · từ ${datefmt(ev.valid_from)}`,invalid:true}}
- if(!ev.valid_until)return {key:'expired',label:'Thiếu ngày hết hiệu lực',invalid:true}
- const end=new Date(`${ev.valid_until}T00:00:00`),now=new Date();now.setHours(0,0,0,0);const days=Math.ceil((end.getTime()-now.getTime())/86400000)
- if(days<0)return {key:'expired',label:`✕ Hết hiệu lực · ${datefmt(ev.valid_until)}`,invalid:true}
- if(days<=30)return {key:'expiring',label:`⚠ Sắp hết hiệu lực · còn ${days} ngày`,invalid:false}
- return {key:'valid',label:`✓ Còn hiệu lực · đến ${datefmt(ev.valid_until)}`,invalid:false}
+ if(ev.validity_mode==='fixed')return {key:'fixed-disabled',label:'Có thời hạn · đang tạm khóa kiểm tra hiệu lực',invalid:false}
+ return {key:'indefinite',label:'∞ Vô thời hạn',invalid:false}
 }
+
 export function Badge({status}:{status:string}){return <span className={`badge badge-${status}`}>{labels[status]||status}</span>}
 export function Field({label,children}:{label:string;children:ReactNode}){return <label className="field"><span>{label}</span>{children}</label>}
 export function Card({title,actions,children}:{title?:string;actions?:ReactNode;children:ReactNode}){return <section className="card"><div className="card-header">{title&&<h3>{title}</h3>}{actions}</div>{children}</section>}

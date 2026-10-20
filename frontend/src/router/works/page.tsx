@@ -1,49 +1,10 @@
-import {useEffect,useState,type FormEvent} from 'react'
-import {Download,Eye,Plus,X} from 'lucide-react'
-import {api,download,labels,openInline,type ApiError,type Lecturer,type Work} from '../../api'
-import {Badge,Card,Field,currentYear,evidenceState} from '../../components/ui'
-import {askConfirm,askText} from '../../dialog'
-import {useApp} from '../../app/AppContext'
+import {Navigate} from 'react-router-dom'
 
-export default function WorksPage(){
- const {user:currentUser,catalog,tell}=useApp()
- const user=currentUser!
- const [items,setItems]=useState<Work[]>([]),[selected,setSelected]=useState<Work|null>(null),[adding,setAdding]=useState(false),[links,setLinks]=useState<{id:number;work_title:string;lecturer:string;authorship_type:string;department_at_publication:string}[]>([]),[lecturers,setLecturers]=useState<Lecturer[]>([])
- const [workValidityMode,setWorkValidityMode]=useState<'indefinite'|'fixed'>('indefinite'),[workValidFrom,setWorkValidFrom]=useState(''),[workValidUntil,setWorkValidUntil]=useState('')
- const [form,setForm]=useState({title:'',publication_year:currentYear,work_type_id:catalog.work_types[0]?.id||0,doi:'',venue:'',authorship_type:'author',coauthors:'',publication_department_id:user.lecturer?.department_id||0,lecturer_id:''})
- const canCreate=user.role==='lecturer'||user.role==='admin',canReview=user.role==='reviewer'||user.role==='admin'
- useEffect(()=>{if(catalog.work_types.length&&!form.work_type_id)setForm(x=>({...x,work_type_id:catalog.work_types[0].id}))},[catalog.work_types])
- async function reload(){try{setItems(await api<Work[]>('works/'));if(canReview)setLinks(await api('link-requests/'));if(user.role==='admin'){const ls=await api<Lecturer[]>('admin/lecturers/');setLecturers(ls);if(!form.lecturer_id&&ls.length)setForm(x=>({...x,lecturer_id:ls[0].id,publication_department_id:ls[0].department_id}))}}catch(e){tell((e as Error).message,true)}}
- useEffect(()=>{void reload()},[user.role])
- async function create(e:FormEvent){e.preventDefault();try{const payload={...form,authors:form.coauthors.split(/[\n,;]/).map(name=>({name:name.trim()})).filter(a=>a.name)};const w=await api<Work>('works/','POST',payload);setAdding(false);setSelected(w);await reload();tell(user.role==='admin'?'Admin đã tạo bản nháp công trình. Hãy tải ít nhất một minh chứng trước khi gửi xác minh.':'Đã tạo bản nháp. Minh chứng công trình khoa học là bắt buộc trước khi gửi xác minh.')}catch(e){const err=e as ApiError;tell(err.duplicate?`${err.message} Công trình trùng: ${err.duplicate.title}`:err.message,true)}}
- async function upload(w:Work,f:File|null){if(!f)return;if(workValidityMode==='fixed'&&!workValidUntil){tell('Minh chứng có thời hạn bắt buộc nhập ngày hết hiệu lực.',true);return}const fd=new FormData();fd.append('file',f);fd.append('validity_mode',workValidityMode);if(workValidFrom)fd.append('valid_from',workValidFrom);if(workValidUntil)fd.append('valid_until',workValidUntil);try{await api(`works/${w.id}/evidence/`,'POST',fd);setSelected(await api(`works/${w.id}/`));await reload();setWorkValidityMode('indefinite');setWorkValidFrom('');setWorkValidUntil('');tell('Đã tải minh chứng công trình khoa học.')}catch(e){tell((e as Error).message,true)}}
- async function submit(w:Work){if(!await askConfirm('Gửi công trình đến Phòng NCKH để xác minh?'))return;try{await api(`works/${w.id}/submit/`,'POST',{});setSelected(await api(`works/${w.id}/`));await reload();tell('Đã gửi xác minh.')}catch(e){tell((e as Error).message,true)}}
- async function review(w:Work,action:string){const comment=action==='verified'?'':(await askText('Nhập lý do xử lý công trình:')||'');if(action!=='verified'&&!comment)return;try{await api(`works/${w.id}/review/`,'POST',{action,comment});setSelected(await api(`works/${w.id}/`));await reload();tell('Đã xử lý công trình.')}catch(e){tell((e as Error).message,true)}}
- async function link(w:Work){const authorship=await askText('Nhập author nếu là Tác giả; coauthor nếu là Đồng tác giả:','coauthor','Vai trò tác giả');if(!authorship)return;try{await api('link-requests/','POST',{work_id:w.id,authorship_type:authorship,publication_department_id:user.lecturer?.department_id});tell('Đã gửi yêu cầu liên kết.')}catch(e){tell((e as Error).message,true)}}
- async function reviewLink(id:number,action:string){try{await api(`link-requests/${id}/review/`,'POST',{action});await reload();tell('Đã xử lý liên kết.')}catch(e){tell((e as Error).message,true)}}
- function chooseLecturer(id:string){const l=lecturers.find(x=>x.id===id);setForm({...form,lecturer_id:id,publication_department_id:l?.department_id||form.publication_department_id})}
- const editableSelected=selected&&['draft','changes','rejected'].includes(selected.status)&&(user.role==='admin'||selected.created_by_id===user.id)
- return <><div className="page-heading row-head"><div><span className="eyebrow blue">MỤC 10 BM-04</span><h1>Công trình khoa học</h1><p>Mỗi công trình bắt buộc có ít nhất một minh chứng. Minh chứng được dùng trực tiếp để Phòng NCKH xác minh công trình trong BM-04.</p></div>{canCreate&&<button className="primary" onClick={()=>setAdding(!adding)}><Plus size={17}/> Thêm công trình</button>}</div>
- {adding&&<Card title={user.role==='admin'?'Admin thêm công trình cho giảng viên':'Khai báo công trình'}><form onSubmit={create}>{user.role==='admin'&&<Field label="Giảng viên sở hữu / khai báo"><select required value={form.lecturer_id} onChange={e=>chooseLecturer(e.target.value)}><option value="">-- Chọn giảng viên --</option>{lecturers.map(l=><option key={l.id} value={l.id}>{l.staff_code} — {l.full_name} — {l.department}</option>)}</select></Field>}<div className="form-grid"><Field label="Tên công trình"><input required value={form.title} onChange={e=>setForm({...form,title:e.target.value})}/></Field><Field label="Loại"><select required value={form.work_type_id} onChange={e=>setForm({...form,work_type_id:Number(e.target.value)})}>{catalog.work_types.map(x=><option value={x.id} key={x.id}>{x.name}</option>)}</select></Field><Field label="Năm công bố"><input type="number" required value={form.publication_year} onChange={e=>setForm({...form,publication_year:Number(e.target.value)})}/></Field><Field label="Vai trò của giảng viên"><select value={form.authorship_type} onChange={e=>setForm({...form,authorship_type:e.target.value})}><option value="author">Tác giả</option><option value="coauthor">Đồng tác giả</option></select></Field><Field label="Nơi công bố / tên tạp chí"><input value={form.venue} onChange={e=>setForm({...form,venue:e.target.value})}/></Field><Field label="DOI (nếu có)"><input value={form.doi} onChange={e=>setForm({...form,doi:e.target.value})}/></Field></div><Field label="Đồng tác giả khác (mỗi tên một dòng)"><textarea rows={3} value={form.coauthors} onChange={e=>setForm({...form,coauthors:e.target.value})}/></Field><button className="primary" disabled={user.role==='admin'&&!form.lecturer_id}>Lưu bản nháp</button></form></Card>}
- {canReview&&links.length>0&&<Card title="Yêu cầu liên kết đồng tác giả">{links.map(x=><div className="record" key={x.id}><div><strong>{x.work_title}</strong><small>{x.lecturer} · {labels[x.authorship_type]||x.authorship_type} · {x.department_at_publication}</small></div><div className="action-row"><button className="secondary" onClick={()=>void reviewLink(x.id,'approved')}>Duyệt</button><button className="secondary" onClick={()=>void reviewLink(x.id,'rejected')}>Từ chối</button></div></div>)}</Card>}
- <Card title={`Danh sách công trình (${items.length})`}><div className="table-scroll"><table><thead><tr><th>Tên công trình</th><th>Năm</th><th>Nơi công bố</th><th>Trạng thái</th><th></th></tr></thead><tbody>{items.map(w=><tr key={w.id}><td className="strong">{w.title}</td><td>{w.publication_year}</td><td>{w.venue||'—'}</td><td><Badge status={w.status}/></td><td><button className="link-button" onClick={()=>setSelected(w)}>Chi tiết</button></td></tr>)}</tbody></table></div></Card>
- {selected&&<Card title="Chi tiết công trình" actions={<button className="icon-btn" onClick={()=>setSelected(null)}><X/></button>}>
-  <h3>{selected.title}</h3>
-  <p>{selected.work_type} · {selected.publication_year} · {selected.venue||'Chưa có nơi công bố'}</p>
-  <p><strong>Tác giả:</strong> {selected.authors.map(a=>`${a.name} (${a.authorship_label})`).join('; ')}</p>
-  <div className="evidence-list">
-   <strong>Minh chứng công trình khoa học (bắt buộc):</strong>
-   {selected.evidence.length===0?<span className="muted"> Chưa có minh chứng.</span>:selected.evidence.map(ev=>{const st=evidenceState(ev);return <div className="evidence-row evidence-row-rich" key={ev.id}><div className="evidence-main"><span>{ev.original_name}</span><small className={`evidence-validity evidence-${st.key}`}>{st.label}</small></div><div className="mini-actions"><button onClick={()=>openInline(`evidence/${ev.id}/view/`)}><Eye size={14}/> Xem</button><button onClick={()=>void download(`evidence/${ev.id}/download/`,ev.original_name)}><Download size={14}/> Tải</button></div></div>})}
-  </div>
-  {editableSelected&&<>
-   <div className="form-grid evidence-validity-form">
-    <Field label="Thời hạn hiệu lực"><select value={workValidityMode} onChange={e=>{const mode=e.target.value as 'indefinite'|'fixed';setWorkValidityMode(mode);if(mode==='indefinite'){setWorkValidFrom('');setWorkValidUntil('')}}}><option value="indefinite">Vô thời hạn</option><option value="fixed">Có thời hạn</option></select></Field>
-    {workValidityMode==='fixed'&&<><Field label="Ngày có hiệu lực (không bắt buộc)"><input type="date" value={workValidFrom} onChange={e=>setWorkValidFrom(e.target.value)}/></Field><Field label="Ngày hết hiệu lực (bắt buộc)"><input type="date" required value={workValidUntil} onChange={e=>setWorkValidUntil(e.target.value)}/></Field></>}
-   </div>
-   <div className="action-row"><label className="secondary file-button">Tải minh chứng<input hidden type="file" accept=".pdf,.png,.jpg,.jpeg" onChange={e=>void upload(selected,e.target.files?.[0]||null)}/></label><button className="primary" disabled={selected.evidence.length===0} title={selected.evidence.length===0?'Phải có ít nhất một minh chứng công trình trước khi gửi xác minh':''} onClick={()=>void submit(selected)}>Gửi kiểm tra công trình</button></div>
-   {selected.evidence.length===0&&<p className="verification-warning">Công trình khoa học bắt buộc có ít nhất một minh chứng trước khi gửi xác minh.</p>}
-  </>}
-  {user.role==='lecturer'&&selected.status==='verified'&&!selected.authors.some(a=>a.lecturer_id===user.lecturer?.id)&&<button className="secondary" onClick={()=>void link(selected)}>Yêu cầu liên kết công trình</button>}
-  {canReview&&selected.status==='pending'&&<div className="action-row"><button className="primary" onClick={()=>void review(selected,'verified')}>Xác nhận công trình</button><button className="secondary" onClick={()=>void review(selected,'changes')}>Yêu cầu chỉnh sửa</button><button className="secondary" onClick={()=>void review(selected,'rejected')}>Từ chối</button></div>}
- </Card>}</>
+/**
+ * V8: Công trình khoa học đã được chuyển vào Mục 10 của /profile.
+ * Giữ file route legacy để các bookmark/source cũ không lỗi, nhưng không còn
+ * màn hình xác minh công trình độc lập.
+ */
+export default function WorksLegacyPage(){
+ return <Navigate to="/profile" replace/>
 }

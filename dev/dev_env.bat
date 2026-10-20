@@ -2,7 +2,7 @@
 REM Sao chép file này thành dev_env.bat rồi thay các giá trị CHANGE_ME.
 set DJANGO_SECRET_KEY=CHANGE_ME_DEV_SECRET_KEY_AT_LEAST_50_CHARS
 set DJANGO_DEBUG=1
-set DJANGO_ALLOWED_HOSTS=localhost,127.0.0.1
+set "DJANGO_ALLOWED_HOSTS=*"
 set DJANGO_CSRF_TRUSTED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
 set MYSQL_DATABASE=research_profiles_dev
 set MYSQL_USER=root

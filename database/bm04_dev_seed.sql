@@ -12,16 +12,16 @@ ON DUPLICATE KEY UPDATE name=VALUES(name);
 
 INSERT INTO portal_worktype(code,name,is_active) VALUES
 ('textbook','Giáo trình',1),
-('monograph','Sách chuyên khảo',1),
+('monograph','Sách chuyên khảo',0),
 ('reference_book','Sách tham khảo',1),
 ('professional_casebook','Bài tập tình huống nghiệp vụ',1),
 ('national_project','Đề tài khoa học cấp quốc gia',1),
 ('ministerial_project','Đề tài khoa học cấp bộ',1),
 ('provincial_project','Đề tài khoa học cấp tỉnh/thành phố',1),
 ('institutional_project','Đề tài khoa học cấp cơ sở',1),
-('student_project','Đề tài khoa học học viên',1),
-('student_scientific_topic','Chuyên đề khoa học học viên',1),
+('student_project','Đề tài khoa học học viên',0),
+('student_scientific_topic','Chuyên đề khoa học học viên',0),
 ('journal_article','Bài báo khoa học',1),
-('conference_proceedings','Bài kỷ yếu hội thảo khoa học',1),
-('initiative','Sáng kiến',1)
+('conference_proceedings','Bài kỷ yếu hội thảo khoa học (khi có ISO)',1),
+('initiative','Sáng kiến',0)
 ON DUPLICATE KEY UPDATE name=VALUES(name),is_active=1;

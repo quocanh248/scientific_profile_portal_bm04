@@ -75,7 +75,7 @@ class DepartmentHistory(models.Model):
 
 
 class EmploymentRecord(models.Model):
-    """Mục 9 BM-04: quá trình công tác. Admin quản lý theo quyết định nhân sự."""
+    """Mục 9 BM-04: quá trình công tác do giảng viên tự cập nhật; Admin có thể hỗ trợ quản lý."""
     lecturer = models.ForeignKey(Lecturer, on_delete=models.CASCADE, related_name='employment_records')
     start_year = models.PositiveSmallIntegerField()
     end_year = models.PositiveSmallIntegerField(null=True, blank=True)
@@ -128,7 +128,7 @@ class WorkType(models.Model):
 
 
 class ResearchWork(models.Model):
-    """Mục 10 BM-04. Công trình dùng chung giữa nhiều giảng viên, có quy trình xác minh."""
+    """Mục 10 BM-04. Công trình dùng chung giữa nhiều giảng viên; chỉ xác minh trong checklist của hồ sơ BM-04 khi gửi phê duyệt."""
     class Status(models.TextChoices):
         DRAFT = 'draft', 'Bản nháp'
         PENDING = 'pending', 'Chờ xác minh'

@@ -16,7 +16,7 @@ urlpatterns = [
     path('approvals/<uuid:pk>/scan/', v.upload_scan), path('approvals/<uuid:pk>/sign/', v.sign_approval), path('approvals/<uuid:pk>/verify-signature/', v.verify_approval_signature), path('approvals/<uuid:pk>/<str:kind>/', v.approval_file),
     path('signing/identity/', v.signing_identity),
     path('reports/', v.reports), path('reports/export/', v.reports_export),
-    path('admin/users/', v.admin_users), path('admin/users/import/', v.admin_import), path('admin/users/<int:pk>/', v.admin_update_user),
-    path('admin/departments/', v.admin_departments), path('admin/departments/<int:pk>/', v.admin_department_detail),
+    path('admin/users/', v.admin_users), path('admin/users/import/', v.admin_import), path('admin/users/<int:pk>/', v.admin_update_user), path('admin/users/<int:pk>/reset-temporary-password/', v.admin_reset_temporary_password),
+    path('admin/departments/', v.admin_departments), path('admin/departments/template/', v.admin_departments_template), path('admin/departments/import/', v.admin_departments_import), path('admin/departments/<int:pk>/', v.admin_department_detail),
     path('admin/lecturers/', v.admin_lecturers), path('admin/lecturers/<uuid:pk>/', v.admin_lecturer), path('admin/audit/', v.audit_logs),
 ]

@@ -1,6 +1,8 @@
+import base64
 import json
 import secrets
 import uuid
+from io import BytesIO
 from datetime import date, datetime, timedelta
 from django.contrib.auth import authenticate, login, logout, password_validation
 from django.db import transaction, IntegrityError
@@ -476,8 +478,11 @@ def work_detail(request, pk):
     if not w or not can_access_work(request, w):
         return failure('Không tìm thấy công trình.', 404)
     if request.method == 'PATCH':
-        if (request.user.role != 'admin' and w.created_by_id != request.user.id) or w.status not in ('draft', 'changes', 'rejected'):
-            return failure('Không thể sửa trực tiếp công trình đã gửi hoặc đã xác minh.', 403)
+        # V8: công trình là dữ liệu thuộc Lý lịch BM-04. Không còn bước gửi/xác minh
+        # riêng trước khi tạo BM-04; snapshot lịch sử bảo đảm hồ sơ đã ký không đổi.
+        owns_or_authors = w.created_by_id == request.user.id or w.authors.filter(lecturer__user=request.user).exists()
+        if request.user.role != 'admin' and not owns_or_authors:
+            return failure('Không có quyền sửa công trình này.', 403)
         d = json_body(request)
         try:
             year = year_value(d.get('publication_year', w.publication_year), required=True)
@@ -509,8 +514,9 @@ def work_detail(request, pk):
 @api_view(['POST'])
 def upload_evidence(request, pk):
     w = ResearchWork.objects.filter(pk=pk).first()
-    if not w or ((request.user.role != 'admin' and w.created_by_id != request.user.id) or w.status not in ('draft', 'changes', 'rejected')):
-        return failure('Không thể bổ sung minh chứng công trình ở trạng thái hiện tại.', 403)
+    owns_or_authors = bool(w) and (w.created_by_id == request.user.id or w.authors.filter(lecturer__user=request.user).exists())
+    if not w or (request.user.role != 'admin' and not owns_or_authors):
+        return failure('Không thể bổ sung minh chứng cho công trình này.', 403)
     f = request.FILES.get('file')
     if not f:
         return failure('Chưa chọn tệp minh chứng công trình.')
@@ -611,18 +617,17 @@ def _evidence_out(e):
 
 
 def _validity_fields(data):
+    """Đọc lựa chọn thời hạn minh chứng.
+
+    V8 tạm khóa chức năng hiệu lực theo ngày. Hệ thống vẫn lưu lựa chọn
+    `indefinite`/`fixed`, nhưng khi chọn `fixed` sẽ không yêu cầu và không
+    sử dụng valid_from/valid_until. Hai trường ngày được để trống để tránh
+    vô tình kích hoạt logic hết hạn cũ.
+    """
     mode = str(data.get('validity_mode') or EvidenceDocument.ValidityMode.INDEFINITE)
     if mode not in EvidenceDocument.ValidityMode.values:
         raise ValueError('Thời hạn hiệu lực không hợp lệ.')
-    valid_from = parse_date(str(data.get('valid_from') or '')) if data.get('valid_from') else None
-    valid_until = parse_date(str(data.get('valid_until') or '')) if data.get('valid_until') else None
-    if mode == EvidenceDocument.ValidityMode.FIXED and not valid_until:
-        raise ValueError('Minh chứng có thời hạn bắt buộc nhập ngày hết hiệu lực.')
-    if valid_from and valid_until and valid_from > valid_until:
-        raise ValueError('Ngày có hiệu lực không được sau ngày hết hiệu lực.')
-    if mode == EvidenceDocument.ValidityMode.INDEFINITE:
-        valid_from = valid_until = None
-    return mode, valid_from, valid_until
+    return mode, None, None
 
 
 @api_view(['GET', 'POST'])
@@ -739,57 +744,18 @@ def download_profile_evidence(request, pk):
 
 @api_view(['POST'])
 def submit_work(request, pk):
-    with transaction.atomic():
-        w = ResearchWork.objects.select_for_update().filter(pk=pk).first()
-        if not w or (request.user.role != 'admin' and w.created_by_id != request.user.id):
-            return failure('Không tìm thấy công trình.', 404)
-        if w.status not in ('draft', 'changes', 'rejected'):
-            return failure('Trạng thái không cho phép gửi xác minh.')
-        # Từ V6.4: công trình bắt buộc có ít nhất một WorkEvidence. Đây cũng là
-        # minh chứng mà Phòng NCKH sẽ thấy trong checklist BM-04.
-        if not w.evidence.exists():
-            return failure('Công trình khoa học bắt buộc có ít nhất một minh chứng trước khi gửi xác minh.')
-        work_ev = work_evidence_for(w)
-        if not evidence_usable(work_ev):
-            return failure('Có minh chứng công trình đã hết hiệu lực hoặc chưa có hiệu lực. Vui lòng cập nhật minh chứng hợp lệ trước khi gửi.')
-        w.status = 'pending'
-        w.save(update_fields=['status', 'updated_at'])
-        audit(request.user, 'submit_work', 'work', w.id)
-    return Response({'ok': True, 'status': w.status})
+    return failure(
+        'V8 không còn quy trình gửi xác minh công trình riêng. Hãy cập nhật công trình tại Lý lịch BM-04; Phòng NCKH chỉ xác minh khi công trình được đưa vào hồ sơ BM-04 và gửi phê duyệt.',
+        409,
+    )
 
 
 @api_view(['POST'])
 def review_work(request, pk):
-    guard = require_role(request, 'reviewer')
-    if guard:
-        return guard
-    d = json_body(request)
-    action = d.get('action')
-    note = str(d.get('comment', '')).strip()
-    if action not in ('verified', 'changes', 'rejected'):
-        return failure('Hành động không hợp lệ.')
-    if action != 'verified' and not note:
-        return failure('Cần nhập lý do yêu cầu bổ sung hoặc từ chối.')
-    with transaction.atomic():
-        w = ResearchWork.objects.select_for_update().filter(pk=pk).first()
-        if not w:
-            return failure('Không thấy công trình.', 404)
-        if w.status != 'pending':
-            return failure('Công trình không còn ở trạng thái chờ xác minh.', 409)
-        if action == 'verified':
-            if not w.evidence.exists():
-                return failure('Công trình chưa có minh chứng bắt buộc nên chưa thể xác minh.', 409)
-            if not evidence_usable(work_evidence_for(w)):
-                return failure('Có minh chứng công trình đã hết hiệu lực hoặc chưa có hiệu lực nên chưa thể xác minh.', 409)
-            dup = find_duplicate(w.title, w.publication_year, w.doi, exclude=w.pk)
-            if dup:
-                return failure('Phát hiện công trình trùng; cần xử lý liên kết thay vì xác minh.', 409)
-            w.verified_at = timezone.now()
-        w.status = action
-        w.save()
-        WorkReview.objects.create(work=w, reviewer=request.user, action=action, comment=note)
-        audit(request.user, 'review_work', 'work', w.pk, result=action)
-    return Response({'ok': True, 'status': action})
+    return failure(
+        'V8 không còn xác minh công trình độc lập. Việc xác minh được thực hiện trong checklist của hồ sơ BM-04 tại In & phê duyệt BM-04.',
+        409,
+    )
 
 
 @api_view(['GET', 'POST'])
@@ -1534,12 +1500,20 @@ def report_data(request=None):
     except ValueError as ex:
         return {'error': str(ex)}
 
-    verified_period = ResearchWork.objects.filter(status='verified', verified_at__gte=start_dt, verified_at__lt=end_dt)
+    # V8: công trình không còn quy trình xác minh độc lập. Một công trình được
+    # tính là "đã xác minh trong kỳ" khi mục WORK của nó được NCKH xác minh
+    # trong checklist của ít nhất một hồ sơ BM-04.
+    verified_work_ids = list(VerificationRecord.objects.filter(
+        section=EvidenceDocument.Section.WORK,
+        status=VerificationRecord.Status.VERIFIED,
+        reviewed_at__gte=start_dt, reviewed_at__lt=end_dt,
+    ).values_list('entity_id', flat=True).distinct())
+    verified_period = ResearchWork.objects.filter(pk__in=verified_work_ids)
     by_year = list(verified_period.values('publication_year').annotate(total=Count('id')).order_by('-publication_year'))
     by_type = list(verified_period.values('work_type__name').annotate(total=Count('id')).order_by('-total', 'work_type__name'))
     by_department = list(
         WorkAuthor.objects.filter(
-            work__status='verified', work__verified_at__gte=start_dt, work__verified_at__lt=end_dt,
+            work_id__in=verified_work_ids,
             lecturer__isnull=False, department_at_publication__isnull=False,
         ).values('department_at_publication__name').annotate(total=Count('work_id', distinct=True)).order_by('-total')
     )
@@ -1548,8 +1522,8 @@ def report_data(request=None):
         'period': period,
         'from_date': str(start_date), 'to_date': str(end_date),
         'total_lecturers': Lecturer.objects.count(),
-        'total_works': ResearchWork.objects.filter(status='verified').count(),
-        'pending_works': ResearchWork.objects.filter(status='pending').count(),
+        'total_works': ResearchWork.objects.count(),
+        'pending_works': ResearchWork.objects.filter(evidence__isnull=True).distinct().count(),
         'pending_approvals': ProfileApproval.objects.filter(status__in=['review', 'signer', 'print', 'signed']).count(),
         'approvals_created': ProfileApproval.objects.filter(submitted_at__gte=start_dt, submitted_at__lt=end_dt).count(),
         'approvals_approved': ProfileApproval.objects.filter(approved_at__gte=start_dt, approved_at__lt=end_dt).count(),
@@ -1560,7 +1534,7 @@ def report_data(request=None):
         'active_users': AuditLog.objects.filter(at__gte=start_dt, at__lt=end_dt, actor__isnull=False).values('actor_id').distinct().count(),
         'approval_status': status_rows,
         'by_year': by_year, 'by_type': by_type, 'by_department': by_department,
-        'note': 'Số liệu hoạt động lọc theo thời điểm phát sinh tương ứng; công trình theo khoa dùng khoa tại thời điểm công bố.',
+        'note': 'V8 không xác minh công trình độc lập. Số công trình xác minh được tính từ checklist BM-04 của Phòng NCKH; công trình theo khoa dùng khoa tại thời điểm công bố.',
     }
 
 
@@ -1586,7 +1560,7 @@ def reports_export(request):
     wb = Workbook()
     ws = wb.active
     ws.title = 'Tong hop'
-    for row in [['Chi tieu', 'So luong'], ['Tu ngay', r['from_date']], ['Den ngay', r['to_date']], ['Giang vien', r['total_lecturers']], ['Cong trinh duy nhat', r['total_works']], ['Cong trinh tao trong ky', r['works_created']], ['Cong trinh xac minh trong ky', r['works_verified']], ['BM-04 tao trong ky', r['approvals_created']], ['BM-04 da duyet trong ky', r['approvals_approved']], ['BM-04 da ky so trong ky', r['approvals_signed']], ['BM-04 hoan tat trong ky', r['approvals_completed']], ['Nguoi dung co hoat dong', r['active_users']], ['Cong trinh cho xac minh', r['pending_works']], ['Ho so BM-04 dang xu ly', r['pending_approvals']]]:
+    for row in [['Chi tieu', 'So luong'], ['Tu ngay', r['from_date']], ['Den ngay', r['to_date']], ['Giang vien', r['total_lecturers']], ['Cong trinh duy nhat', r['total_works']], ['Cong trinh tao trong ky', r['works_created']], ['Cong trinh xac minh trong ky', r['works_verified']], ['BM-04 tao trong ky', r['approvals_created']], ['BM-04 da duyet trong ky', r['approvals_approved']], ['BM-04 da ky so trong ky', r['approvals_signed']], ['BM-04 hoan tat trong ky', r['approvals_completed']], ['Nguoi dung co hoat dong', r['active_users']], ['Cong trinh chua co minh chung', r['pending_works']], ['Ho so BM-04 dang xu ly', r['pending_approvals']]]:
         ws.append(row)
     for key, name, col in [('by_year', 'Theo nam', 'publication_year'), ('by_type', 'Theo loai', 'work_type__name'), ('by_department', 'Theo khoa', 'department_at_publication__name')]:
         s = wb.create_sheet(name)
@@ -1600,13 +1574,43 @@ def reports_export(request):
     return FileResponse(out, as_attachment=True, filename='bao_cao_khoa_hoc.xlsx', content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
 
+def _credentials_excel_base64(credentials):
+    """Tạo file Excel mật khẩu tạm trong bộ nhớ, không lưu plaintext trên server."""
+    from openpyxl import Workbook
+    wb = Workbook()
+    ws = wb.active
+    ws.title = 'Tai_khoan_tam'
+    ws.append(['staff_code', 'username', 'temporary_password', 'note'])
+    for item in credentials:
+        ws.append([
+            item.get('staff_code', ''), item.get('username', ''),
+            item.get('temporary_password', ''),
+            'Yêu cầu đổi mật khẩu ngay lần đăng nhập đầu tiên',
+        ])
+    for col, width in {'A': 18, 'B': 24, 'C': 30, 'D': 48}.items():
+        ws.column_dimensions[col].width = width
+    out = BytesIO()
+    wb.save(out)
+    return base64.b64encode(out.getvalue()).decode('ascii')
+
+
 @api_view(['GET', 'POST'])
 def admin_users(request):
     guard = require_role(request, 'admin', 'viewer_admin') if request.method == 'GET' else require_role(request, 'admin')
     if guard:
         return guard
     if request.method == 'GET':
-        return Response([{'id': u.pk, 'username': u.username, 'role': u.role, 'is_active': u.is_active, 'lecturer': u.lecturer.full_name if hasattr(u, 'lecturer') else ''} for u in User.objects.select_related('lecturer').order_by('username')[:1000]])
+        return Response([{
+            'id': u.pk,
+            'username': u.username,
+            'role': u.role,
+            'is_active': u.is_active,
+            'lecturer': u.lecturer.full_name if hasattr(u, 'lecturer') else '',
+            'must_change_password': u.must_change_password,
+            'last_login': u.last_login.isoformat() if u.last_login else None,
+            'activation_status': 'pending' if u.must_change_password else 'active',
+            'activation_status_label': 'Chưa kích hoạt/Chưa đổi mật khẩu' if u.must_change_password else 'Đã kích hoạt',
+        } for u in User.objects.select_related('lecturer').order_by('username')[:1000]])
     d = json_body(request)
     try:
         if d.get('role') not in User.Role.values:
@@ -1642,6 +1646,28 @@ def admin_update_user(request, pk):
     u.save()
     audit(request.user, 'update_user', 'user', u.pk)
     return Response({'ok': True})
+
+
+@api_view(['POST'])
+def admin_reset_temporary_password(request, pk):
+    guard = require_role(request, 'admin')
+    if guard:
+        return guard
+    u = User.objects.filter(pk=pk).first()
+    if not u:
+        return failure('Không thấy người dùng.', 404)
+    if not u.must_change_password:
+        return failure('Tài khoản đã kích hoạt và đã đổi mật khẩu; chức năng này chỉ dùng cho tài khoản đang ở trạng thái chưa đổi mật khẩu.', 409)
+    password = secrets.token_urlsafe(15)
+    u.set_password(password)
+    u.must_change_password = True
+    u.save(update_fields=['password', 'must_change_password'])
+    audit(request.user, 'reset_temporary_password', 'user', u.pk)
+    return Response({
+        'username': u.username,
+        'temporary_password': password,
+        'warning': 'Mật khẩu tạm chỉ hiển thị lần này và phải được đổi sau khi đăng nhập.',
+    })
 
 
 @api_view(['POST'])
@@ -1695,7 +1721,7 @@ def admin_import(request):
     except Exception as ex:
         return failure('Không đọc được tệp Excel: ' + str(ex)[:120])
     if problems:
-        return Response({'created': 0, 'errors': problems[:100], 'valid_rows': len(parsed)}, status=400)
+        return Response({'error': 'Tệp Excel có dữ liệu giảng viên không hợp lệ.', 'created': 0, 'errors': problems[:100], 'valid_rows': len(parsed)}, status=400)
     if request.data.get('dry_run', '0') == '1':
         return Response({'valid_rows': len(parsed), 'errors': [], 'preview': True})
     credentials = []
@@ -1727,12 +1753,102 @@ def admin_import(request):
             )
             credentials.append({'staff_code': lecturer.staff_code, 'username': u.username, 'temporary_password': password})
         audit(request.user, 'import_users', 'user', details_count=len(parsed))
-    return Response({'created': len(credentials), 'credentials': credentials, 'warning': 'Chỉ hiển thị mật khẩu khởi tạo một lần; không gửi file tài khoản qua kênh không bảo mật.'})
+    return Response({
+        'created': len(credentials),
+        'credentials': credentials,
+        'credentials_xlsx_base64': _credentials_excel_base64(credentials),
+        'credentials_filename': f'tai_khoan_tam_giang_vien_{timezone.localdate():%Y%m%d}.xlsx',
+        'warning': 'Mật khẩu tạm chỉ được trả về ngay sau khi tạo và không được lưu dạng rõ. Hãy tải file Excel và chuyển qua kênh bảo mật.',
+    })
 
 
 def settings_limit():
     from django.conf import settings
     return settings.MAX_UPLOAD_BYTES
+
+
+@api_view(['GET'])
+def admin_departments_template(request):
+    guard = require_role(request, 'admin', 'viewer_admin')
+    if guard:
+        return guard
+    from openpyxl import Workbook
+    wb = Workbook()
+    ws = wb.active
+    ws.title = 'Don_vi'
+    ws.append(['code', 'name', 'address', 'head_name', 'phone'])
+    ws.append(['K01', 'Khoa mẫu', 'Địa chỉ đơn vị', 'Nguyễn Văn A', '0123456789'])
+    for col, width in {'A': 18, 'B': 36, 'C': 42, 'D': 28, 'E': 20}.items():
+        ws.column_dimensions[col].width = width
+    out = BytesIO(); wb.save(out); out.seek(0)
+    return FileResponse(out, as_attachment=True, filename='template_import_co_quan_phong_ban.xlsx', content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+
+
+@api_view(['POST'])
+def admin_departments_import(request):
+    guard = require_role(request, 'admin')
+    if guard:
+        return guard
+    f = request.FILES.get('file')
+    if not f or not f.name.lower().endswith('.xlsx'):
+        return failure('Cần chọn tệp Excel .xlsx.')
+    if f.size > settings_limit():
+        return failure('Tệp Excel quá lớn.')
+    from openpyxl import load_workbook
+    try:
+        wb = load_workbook(f, read_only=True, data_only=True)
+        rows = wb.active.iter_rows(values_only=True)
+        headers = [str(v or '').strip().lower() for v in next(rows)]
+        required = ('code', 'name')
+        if any(k not in headers for k in required):
+            return failure('Tệp Excel cần các cột: code, name, address, head_name, phone')
+        parsed, problems, seen = [], [], set()
+        for i, row in enumerate(rows, 2):
+            if not any(v is not None for v in row):
+                continue
+            r = dict(zip(headers, row))
+            code = str(r.get('code') or '').strip()
+            name = str(r.get('name') or '').strip()
+            if not code or not name:
+                problems.append(f'Dòng {i}: thiếu code hoặc name')
+                continue
+            if code in seen:
+                problems.append(f'Dòng {i}: trùng mã đơn vị trong tệp')
+                continue
+            conflict = Department.objects.filter(name=name).exclude(code=code).first()
+            if conflict:
+                problems.append(f'Dòng {i}: tên đơn vị đã được dùng bởi mã {conflict.code}')
+                continue
+            parsed.append({
+                'code': code[:30], 'name': name[:180],
+                'address': str(r.get('address') or '').strip()[:500],
+                'head_name': str(r.get('head_name') or '').strip()[:200],
+                'phone': str(r.get('phone') or '').strip()[:40],
+            })
+            seen.add(code)
+            if len(parsed) > 1000:
+                return failure('Chỉ nhập tối đa 1.000 đơn vị mỗi lần.')
+    except Exception as ex:
+        return failure('Không đọc được tệp Excel: ' + str(ex)[:120])
+    if problems:
+        return Response({'error': 'Tệp Excel cơ quan/phòng ban có dữ liệu không hợp lệ.', 'created': 0, 'updated': 0, 'valid_rows': len(parsed), 'errors': problems[:100]}, status=400)
+    existing = {x.code for x in Department.objects.filter(code__in=[r['code'] for r in parsed])}
+    if request.data.get('dry_run', '0') == '1':
+        return Response({'valid_rows': len(parsed), 'created': len(parsed)-len(existing), 'updated': len(existing), 'errors': [], 'preview': True})
+    created = updated = 0
+    try:
+        with transaction.atomic():
+            for r in parsed:
+                dep = Department.objects.filter(code=r['code']).first()
+                if dep:
+                    dep.name=r['name']; dep.address=r['address']; dep.head_name=r['head_name']; dep.phone=r['phone']; dep.save()
+                    updated += 1
+                else:
+                    Department.objects.create(**r); created += 1
+            audit(request.user, 'import_departments', 'department', details_count=len(parsed), created=created, updated=updated)
+    except IntegrityError:
+        return failure('Có mã hoặc tên đơn vị bị trùng trong cơ sở dữ liệu.', 409)
+    return Response({'created': created, 'updated': updated, 'total': created+updated})
 
 
 @api_view(['GET', 'POST'])
