@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { roleLabels } from "../api";
-import { DialogHost } from "../dialog";
+import {DialogHost, askConfirm} from '../dialog'
 import { useApp } from "../app/AppContext";
 import { metaForPath, routeMeta, type RouteKey } from "../app/routes";
 
@@ -35,14 +35,21 @@ export default function AppLayout() {
     navigate = useNavigate();
   if (!user) return null;
   const meta = metaForPath(location.pathname);
-  async function doLogout() {
-    try {
-      await logout();
-      navigate("/login", { replace: true });
-    } catch (e) {
-      tell((e as Error).message, true);
-    }
+  async function doLogout(){
+  const confirmed = await askConfirm(
+    'Bạn có chắc chắn muốn đăng xuất khỏi hệ thống?',
+    'Xác nhận đăng xuất'
+  )
+
+  if(!confirmed) return
+
+  try{
+    await logout()
+    navigate('/login',{replace:true})
+  }catch(e){
+    tell((e as Error).message,true)
   }
+}
   return (
     <div className="shell">
       <aside className={`sidebar ${menu ? "show" : ""}`}>
