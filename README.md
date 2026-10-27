@@ -50,3 +50,11 @@ Script chỉ cập nhật trạng thái/tên danh mục `portal_worktype`, khôn
 ## Bảo mật mật khẩu tạm
 
 Django chỉ lưu password hash. Mật khẩu tạm không thể đọc ngược từ database. File Excel mật khẩu tạm được tạo trong bộ nhớ ngay sau import và gửi về trình duyệt; backend không lưu file/mật khẩu plaintext. Sau khi reload trang, mật khẩu tạm cũ không còn xem lại được; nếu tài khoản vẫn chưa đổi mật khẩu, Admin có thể dùng **Đặt lại mật khẩu tạm**.
+
+## V8.2 DEV — nhật ký giảng viên và tra cứu bản scan BM-04
+
+- Chức năng **Nhật ký giảng viên** có mô tả thao tác tiếng Việt và bộ lọc cho lãnh đạo/NCKH (`/activity`).
+- Chức năng **Tra cứu BM-04** hỗ trợ đối chiếu mã QR/mã xác thực của ảnh/PDF scan với bản ký số gốc đang lưu; PDF gốc vẫn dùng SHA-256 + RSA.
+- Các BM-04 ký mới có mã QR ở vùng chữ ký. QR không phải là chữ ký số và không chứng minh ảnh scan không bị chỉnh sửa.
+- Trước khi chạy: `pip install -r backend/requirements.txt`; xem `docs/FEATURE_V8_2_NHAT_KY_TRA_CUU_BM04.md` để kiểm thử và triển khai.
+- V8.2 không thêm cột hay bảng MySQL. Cần sao lưu trước khi nâng cấp, **chưa xác nhận kiểm thử end-to-end**.

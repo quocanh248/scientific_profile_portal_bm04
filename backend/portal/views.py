@@ -3,6 +3,7 @@ import json
 import secrets
 import uuid
 from io import BytesIO
+from pathlib import Path
 from datetime import date, datetime, timedelta
 from django.contrib.auth import authenticate, login, logout, password_validation
 from django.db import transaction, IntegrityError
@@ -31,6 +32,9 @@ from .services import (
 from .pdf_service import profile_pdf
 from .signing_service import provision_identity, identity_public_payload, sign_bytes, verify_bytes, sha256_bytes
 from .verification_service import create_approval_verification_items, review_item, all_items_verified, evidence_usable
+from .uploaded_signature_verifier import verify_uploaded_file, MAX_VERIFY_UPLOAD_BYTES
+from .audit_explain import explain_log
+from .bm04_scan_verifier import scan_lookup_result
 
 
 def failure(message, status_code=400, **extra):
@@ -1163,8 +1167,9 @@ def approval_detail(request, pk):
         } for x in a.verification_items.select_related('reviewer', 'reused_verification')],
         'lecturer_logs': [{
             'at': x.at.isoformat(), 'actor': x.actor.username if x.actor else None,
-            'action': x.action, 'entity': x.entity, 'entity_id': x.entity_id, 'details': x.details,
-        } for x in AuditLog.objects.select_related('actor').filter(lecturer=a.lecturer)[:100]],
+            'action': x.action, 'entity': x.entity, 'entity_id': x.entity_id,
+            **explain_log(x),
+        } for x in AuditLog.objects.select_related('actor', 'actor__lecturer', 'lecturer').filter(Q(lecturer=a.lecturer) | Q(lecturer__isnull=True, actor=a.lecturer.user))[:100]],
         'events': [{'action': e.action, 'note': e.note, 'actor': e.actor.username, 'at': e.at.isoformat()} for e in a.events.select_related('actor')],
     })
 
@@ -1352,6 +1357,39 @@ def signing_identity(request):
         return Response({'user_id': target.id, 'username': target.username, **identity_public_payload(identity)})
     except (DjangoValidationError, ValueError) as ex:
         return error_validation(ex) if isinstance(ex, DjangoValidationError) else failure(str(ex))
+
+
+@api_view(['POST'])
+def verify_uploaded_signature_file(request):
+    """Inspect an uploaded PDF/image without persisting it."""
+    guard = require_role(request, 'lecturer', 'reviewer', 'signer', 'admin', 'viewer_admin')
+    if guard:
+        return guard
+    uploaded = request.FILES.get('file')
+    if not uploaded:
+        return failure('Chưa chọn tệp cần kiểm tra.')
+    if uploaded.size > MAX_VERIFY_UPLOAD_BYTES:
+        return failure('Tệp vượt quá giới hạn 20 MB.', 413)
+    name = str(uploaded.name or 'uploaded-file')[:260]
+    ext = Path(name).suffix.lower()
+    if ext not in ('.pdf', '.png', '.jpg', '.jpeg'):
+        return failure('Chỉ hỗ trợ PDF, PNG, JPG/JPEG.')
+    data = uploaded.read()
+    # Use content signatures rather than trusting the file extension alone.
+    if not (data.startswith(b'%PDF-') or data.startswith(b'\x89PNG\r\n\x1a\n') or data.startswith(b'\xff\xd8\xff')):
+        return failure('Tệp không phải PDF/PNG/JPG hợp lệ.', 400)
+    result = verify_uploaded_file(name, data)
+    # The scan lookup is an independent attestation of source record, NOT cryptographic
+    # proof about the pixels. Original exact-byte PDFs preserve existing V8.1 verdict.
+    if result['verdict'] in ('visual_scan_only', 'no_digital_signature'):
+        result.update(scan_lookup_result(name, data, str(request.data.get('verification_code') or '')[:120]))
+        result['file_name'] = name
+        result['file_kind'] = 'pdf' if data.startswith(b'%PDF-') else 'image'
+        result['size'] = len(data)
+        result['sha256'] = sha256_bytes(data)
+    audit(request.user, 'verify_uploaded_signature_file', 'file_sha256', result['sha256'],
+          file_name=name, result=result['verdict'], size=len(data))
+    return Response(result)
 
 
 @api_view(['POST'])
@@ -1989,17 +2027,30 @@ def admin_lecturers(request):
 
 
 @api_view(['GET'])
-def audit_logs(request):
-    guard = require_role(request, 'admin', 'viewer_admin', 'reviewer')
+def audit_lecturers(request):
+    """Minimal directory for read-only leadership activity filters."""
+    guard = require_role(request, 'admin', 'viewer_admin', 'reviewer', 'signer')
     if guard:
         return guard
-    qs = AuditLog.objects.select_related('actor', 'lecturer').all()
+    return Response(list(Lecturer.objects.order_by('full_name').values('id','full_name','staff_code')[:3000]))
+
+
+@api_view(['GET'])
+def audit_logs(request):
+    guard = require_role(request, 'admin', 'viewer_admin', 'reviewer', 'signer')
+    if guard:
+        return guard
+    qs = AuditLog.objects.select_related('actor', 'actor__lecturer', 'lecturer').all()
     lecturer_id = request.query_params.get('lecturer_id')
     actor = str(request.query_params.get('actor') or '').strip()
     action = str(request.query_params.get('action') or '').strip()
     start_date = request.query_params.get('from')
     end_date = request.query_params.get('to')
-    if lecturer_id: qs = qs.filter(lecturer_id=lecturer_id)
+    if lecturer_id:
+        try: uuid.UUID(str(lecturer_id))
+        except ValueError: return failure('Mã giảng viên không hợp lệ.')
+        # Bao gồm cả các nhật ký cũ chỉ ghi actor mà chưa ghi lecturer.
+        qs = qs.filter(Q(lecturer_id=lecturer_id) | Q(lecturer__isnull=True, actor__lecturer__id=lecturer_id))
     if actor: qs = qs.filter(actor__username__icontains=actor)
     if action: qs = qs.filter(action__icontains=action)
     if start_date:
@@ -2016,7 +2067,8 @@ def audit_logs(request):
         'at': x.at.isoformat(), 'actor': x.actor.username if x.actor else None,
         'lecturer_id': str(x.lecturer_id) if x.lecturer_id else None,
         'lecturer': x.lecturer.full_name if x.lecturer else None,
-        'action': x.action, 'entity': x.entity, 'entity_id': x.entity_id, 'details': x.details,
+        'action': x.action, 'entity': x.entity, 'entity_id': x.entity_id,
+            **explain_log(x),
     } for x in qs[:limit]])
 
 

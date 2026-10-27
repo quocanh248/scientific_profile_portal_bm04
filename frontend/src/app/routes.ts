@@ -1,12 +1,14 @@
 import type {Role} from '../api'
 
-export type RouteKey='dashboard'|'profile'|'approvals'|'signature'|'reports'|'admin'|'password'
+export type RouteKey='dashboard'|'profile'|'approvals'|'signature'|'signature_check'|'activity'|'reports'|'admin'|'password'
 export type RouteMeta={key:RouteKey;path:string;label:string;roles:Role[]}
 export const routeMeta:RouteMeta[]=[
  {key:'dashboard',path:'/',label:'Tổng quan',roles:['lecturer','reviewer','signer','admin','viewer_admin']},
  {key:'profile',path:'/profile',label:'Lý lịch BM-04',roles:['lecturer','admin','viewer_admin']},
  {key:'approvals',path:'/approvals',label:'In & phê duyệt BM-04',roles:['lecturer','reviewer','signer','admin','viewer_admin']},
  {key:'signature',path:'/signature',label:'Quản lý chữ ký',roles:['lecturer','signer','admin']},
+ {key:'signature_check',path:'/signature-check',label:'Tra cứu BM-04',roles:['lecturer','reviewer','signer','admin','viewer_admin']},
+ {key:'activity',path:'/activity',label:'Nhật ký giảng viên',roles:['reviewer','signer','admin','viewer_admin']},
  {key:'reports',path:'/reports',label:'Thống kê báo cáo',roles:['reviewer','signer','admin','viewer_admin']},
  {key:'admin',path:'/admin',label:'Quản trị nhân sự',roles:['admin','viewer_admin']},
  {key:'password',path:'/password',label:'Đổi mật khẩu',roles:['lecturer','reviewer','signer','admin','viewer_admin']},

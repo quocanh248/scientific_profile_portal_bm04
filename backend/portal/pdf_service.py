@@ -10,6 +10,9 @@ from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import mm
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
+from reportlab.graphics.barcode import qr
+from reportlab.graphics.shapes import Drawing
+from reportlab.graphics import renderPDF
 from reportlab.platypus import (
     SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak, KeepTogether, Image, HRFlowable,
 )
@@ -280,6 +283,14 @@ def profile_pdf(snapshot: dict, code: str, draft: bool = False, personal_signatu
                 _p(f"Mã xác thực: {meta.get('verification_code','')}", tiny),
                 _p(f"Thời gian ký: {meta.get('signed_at','')}", tiny),
             ]
+            # QR ở bản in/scan để tra cứu bản ghi phát hành. QR không thay chữ ký số.
+            if meta.get('verification_code'):
+                code_widget = qr.QrCodeWidget('BM04:'+str(meta['verification_code']))
+                bounds = code_widget.getBounds()
+                qr_side = 19*mm
+                draw = Drawing(qr_side, qr_side, transform=[qr_side/(bounds[2]-bounds[0]),0,0,qr_side/(bounds[3]-bounds[1]),0,0])
+                draw.add(code_widget)
+                rows.append(draw)
         else:
             rows.append(_p(fallback_text, center))
         return rows
